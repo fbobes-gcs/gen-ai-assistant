@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bedrock Assistant</title>
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1691.0.min.js"></script>
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary: #FF9900;
+            --aws-orange: #FF9900;
+            --aws-orange-dark: #EC7211;
+            --aws-squid-ink: #232F3E;
+            --aws-squid-ink-light: #37475A;
+            --surface: #ffffff;
+            --surface-variant: #FAFAFA;
+            --surface-container: #F2F3F3;
+            --on-surface: #16191F;
+            --on-surface-variant: #687078;
+            --outline: #D5DBDB;
+            --shadow: rgba(0, 0, 0, 0.08);
+            --glass-bg: rgba(255, 255, 255, 0.95);
+            --glass-border: rgba(0, 0, 0, 0.05);
+        }
+
+        [data-theme="dark"] {
+            --surface: #16191F;
+            --surface-variant: #232F3E;
+            --surface-container: #37475A;
+            --on-surface: #FAFAFA;
+            --on-surface-variant: #AAB7B8;
+            --outline: #545B64;
+            --shadow: rgba(0, 0, 0, 0.3);
+            --glass-bg: rgba(22, 25, 31, 0.95);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Amazon Ember', 'Helvetica Neue', Roboto, Arial, sans-serif;
+            background: var(--surface-variant);
+            min-height: 100vh;
+            color: var(--on-surface);
+            transition: all 0.3s ease;
+        }
+
+        .glass {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            box-shadow: 0 8px 32px var(--shadow);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            resize: both;
+            overflow: auto;
+            min-width: 800px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 32px;
+            margin-bottom: 0;
+            background: var(--aws-squid-ink);
+            box-shadow: 0 2px 4px var(--shadow);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 20px;
+            font-weight: 700;
+            color: white;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .theme-toggle {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            border-radius: 4px;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            color: white;
+        }
+
+        .theme-toggle:hover {
+            transform: scale(1.05);
+            background: var(--outline);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 16px;
+            background: var(--surface-container);
+            border-radius: 24px;
+            font-size: 14px;
+            color: var(--on-surface-variant);
+        }
+
+        .btn {
+            background: var(--aws-orange);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 12px 24px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 1px 3px var(--shadow);
+        }
+
+        .btn:hover {
+            background: var(--aws-orange-dark);
+            box-shadow: 0 2px 6px var(--shadow);
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--aws-squid-ink);
+            border: 1px solid var(--outline);
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface-container);
+            border-color: var(--aws-squid-ink-light);
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .model-selector {
+            padding: 20px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .model-selector select {
+            background: var(--surface);
+            border: 2px solid var(--outline);
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: var(--on-surface);
+            font-size: 14px;
+            min-width: 200px;
+            cursor: pointer;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--outline);
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--surface);
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background-color: var(--primary);
+        }
+
+        input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 32px;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            height: 60vh;
+            resize: both;
+            min-height: 300px;
+            min-width: 400px;
+        }
+
+        .chat-history-sidebar {
+            width: 280px;
+            background: var(--surface-variant);
+            border-right: 1px solid var(--outline);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .chat-history-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--outline);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chat-history-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .chat-history-item {
+            padding: 8px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 4px;
+            font-size: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            transition: background 0.2s;
+        }
+
+        .chat-history-item:hover {
+            background: var(--surface-container);
+        }
+
+        .chat-history-item.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .chat-history-item .chat-title {
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+
+        .chat-history-item .chat-date {
+            font-size: 10px;
+            opacity: 0.7;
+        }
+
+        .main-content-area {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message {
+            display: flex;
+            gap: 12px;
+            animation: slideIn 0.3s ease;
+        }
+
+        .message.user-message {
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .user-message .message-avatar {
+            background: var(--primary);
+            color: white;
+        }
+
+        .assistant-message .message-avatar {
+            background: var(--surface-container);
+            color: var(--on-surface);
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 16px 20px;
+            border-radius: 20px;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .message-content p {
+            margin: 0 0 12px 0;
+        }
+
+        .message-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message-content br {
+            line-height: 1.8;
+        }
+
+        .user-message .message-content {
+            background: var(--primary);
+            color: white;
+            border-bottom-right-radius: 8px;
+        }
+
+        .assistant-message .message-content {
+            background: var(--surface);
+            color: var(--on-surface);
+            border: 1px solid var(--outline);
+            border-bottom-left-radius: 8px;
+        }
+
+        .input-container {
+            padding: 32px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        .chat-input {
+            width: 100%;
+            background: var(--surface);
+            border: 2px solid var(--outline);
+            border-radius: 24px;
+            padding: 16px 24px;
+            font-size: 14px;
+            color: var(--on-surface);
+            resize: both;
+            min-height: 56px;
+            height: 80px;
+            overflow: auto;
+            transition: all 0.2s ease;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .send-btn {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .attach-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--surface-container);
+            color: var(--on-surface-variant);
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .attach-btn:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .rewrite-btn {
+            margin-top: 8px;
+            padding: 4px 8px;
+            background: var(--surface-container);
+            border: none;
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--on-surface-variant);
+            cursor: pointer;
+            opacity: 0.7;
+            transition: all 0.2s ease;
+        }
+
+        .rewrite-btn:hover {
+            opacity: 1;
+            background: var(--outline);
+        }
+
+        .auth-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .auth-card {
+            width: 100%;
+            max-width: 400px;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .auth-title {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: var(--on-surface);
+        }
+
+        .auth-subtitle {
+            color: var(--on-surface-variant);
+            margin-bottom: 32px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--on-surface);
+            font-size: 14px;
+        }
+
+        .form-input {
+            width: 100%;
+            background: var(--surface);
+            border: 2px solid var(--outline);
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 14px;
+            color: var(--on-surface);
+            transition: all 0.2s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .auth-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .link-btn {
+            background: none;
+            border: none;
+            color: var(--primary);
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 12px;
+            }
+            
+            .header {
+                padding: 16px 20px;
+            }
+            
+            .chat-messages {
+                padding: 20px;
+            }
+            
+            .input-container {
+                padding: 20px;
+            }
+            
+            .message-content {
+                max-width: 85%;
+            }
+        }
+    </style>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true, 
+            theme: 'default',
+            flowchart: {
+                curve: 'basis'
+            }
+        });
+        let selectedFile = null;
+        let currentUser = null;
+        let userId = null;
+        let conversationId = null;
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                selectedFile = file;
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('filePreview').style.display = 'flex';
+                
+                // Update placeholder to show file is selected
+                const messageInput = document.getElementById('messageInput');
+                messageInput.placeholder = `File selected: ${file.name} - Enter your message about this file...`;
+            }
+        }
+
+        function isImageGenerationModel(modelId) {
+            return modelId.includes('nova-canvas');
+        }
+    </script>
+</head>
+<body>
+    <div class="container glass" id="mainContainer" style="display: none;">
+        <div class="header">
+            <div class="logo">
+                <span class="material-icons-round">psychology</span>
+                Bedrock Assistant
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-secondary" onclick="newChat()" title="Start new conversation" style="margin-right: 8px;">
+                    <span class="material-icons-round">add_comment</span>
+                    New Chat
+                </button>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                    <span class="material-icons-round" id="themeIcon">dark_mode</span>
+                </button>
+                <div class="user-info">
+                    <span class="material-icons-round">account_circle</span>
+                    <span id="userEmail"></span>
+                    <button class="btn btn-secondary" onclick="signOut()">
+                        <span class="material-icons-round">logout</span>
+                        Sign Out
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content-area">
+            <div class="chat-history-sidebar">
+                <div class="chat-history-header">
+                    <span class="material-icons-round">history</span>
+                    Chat History
+                </div>
+                <div class="chat-history-list" id="chatHistoryList">
+                </div>
+            </div>
+            
+            <div class="chat-area">
+                <div class="chat-container">
+                    <div class="model-selector glass">
+                        <span class="material-icons-round">smart_toy</span>
+                        <label for="modelSelect" style="font-weight: 500;">AI Model:</label>
+                        <select id="modelSelect">
+                            <optgroup label="Text Models">
+                                <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">Claude Sonnet 4.5</option>
+                                <option value="us.anthropic.claude-3-5-haiku-20241022-v1:0">Claude Haiku 3.5</option>
+                                <option value="us.amazon.nova-premier-v1:0">Nova Premier</option>
+                                <option value="us.amazon.nova-pro-v1:0">Nova Pro</option>
+                                <option value="us.meta.llama4-scout-17b-instruct-v1:0">Llama 4 Scout</option>
+                                <option value="us.meta.llama4-maverick-17b-instruct-v1:0">Llama 4 Maverick</option>
+                                <option value="us.anthropic.claude-3-5-sonnet-20241022-v2:0">Claude 3.5 Sonnet v2</option>
+                            </optgroup>
+                            <optgroup label="Image Generation">
+                                <option value="amazon.nova-canvas-v1:0">Nova Canvas</option>
+                            </optgroup>
+                            <optgroup label="Video Generation">
+                                <option value="amazon.nova-reel-v1:0">Nova Reel</option>
+                            </optgroup>
+                        </select>
+                        
+                        <div id="webSearchContainer" style="margin-left: 20px; display: flex; align-items: center; gap: 8px; opacity: 0.5;">
+                            <span class="material-icons-round" style="font-size: 18px;">search</span>
+                            <label for="webSearchToggle" id="webSearchLabel" style="font-weight: 500; cursor: not-allowed;">Web Search (Coming Soon):</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="webSearchToggle" disabled>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="chat-messages glass" id="chatContainer">
+                        <div class="message assistant-message">
+                            <div class="message-avatar">
+                                <span class="material-icons-round">psychology</span>
+                            </div>
+                            <div class="message-content">
+                                Welcome to Bedrock Assistant! I can help you with various tasks, create charts, Mermaid diagrams, draw.io diagrams, and generate images with Nova Canvas and videos with Nova Reel. What would you like to explore today?
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="input-container">
+                        <div class="input-wrapper">
+                            <input type="file" id="fileInput" style="display: none;" accept="image/*,.pdf,.txt,.doc,.docx" onchange="handleFileSelect(event)">
+                            <button class="btn attach-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">
+                                <span class="material-icons-round">attach_file</span>
+                            </button>
+                            <div id="filePreview" style="display: none; align-items: center; padding: 8px 12px; background: #f1f5f9; border-radius: 8px; margin: 0 8px; font-size: 14px; color: #64748b;">
+                                <span class="material-icons-round" style="vertical-align: middle; font-size: 18px; margin-right: 4px;">description</span>
+                                <span id="fileName" style="flex: 1;"></span>
+                                <button onclick="clearFile()" style="background: none; border: none; cursor: pointer; padding: 4px; color: #94a3b8;">
+                                    <span class="material-icons-round" style="font-size: 18px;">close</span>
+                                </button>
+                            </div>
+                            <textarea 
+                                id="messageInput" 
+                                class="chat-input" 
+                                placeholder="Type your message here..."
+                                onkeydown="handleKeyPress(event)"
+                            ></textarea>
+                        </div>
+                        <button class="btn send-btn" onclick="sendMessage()" id="sendButton">
+                            <span class="material-icons-round" id="sendIcon">send</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="auth-container" id="authContainer">
+        <div class="auth-card glass">
+            <div id="signInForm">
+                <h1 class="auth-title">Welcome Back</h1>
+                <p class="auth-subtitle">Sign in to continue to Bedrock Assistant</p>
+                
+                <div class="form-group">
+                    <label class="form-label" for="signInEmail">Email</label>
+                    <input type="email" id="signInEmail" class="form-input" placeholder="Enter your email">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label" for="signInPassword">Password</label>
+                    <input type="password" id="signInPassword" class="form-input" placeholder="Enter your password">
+                </div>
+                
+                <div class="auth-actions">
+                    <button class="btn" onclick="signIn()">
+                        <span class="material-icons-round">login</span>
+                        Sign In
+                    </button>
+                    <button class="link-btn" onclick="showSignUp()">Don't have an account? Sign up</button>
+                    <button class="link-btn" onclick="showForgotPassword()">Forgot password?</button>
+                </div>
+            </div>
+
+            <div id="signUpForm" style="display: none;">
+                <h1 class="auth-title">Create Account</h1>
+                <p class="auth-subtitle">Join Bedrock Assistant today</p>
+                
+                <div class="form-group">
+                    <label class="form-label" for="signUpEmail">Email</label>
+                    <input type="email" id="signUpEmail" class="form-input" placeholder="Enter your email">
+                </div>
+                
+                <div class="auth-actions">
+                    <button class="btn" onclick="signUp()">
+                        <span class="material-icons-round">person_add</span>
+                        Sign Up
+                    </button>
+                    <button class="link-btn" onclick="showSignIn()">Already have an account? Sign in</button>
+                </div>
+            </div>
+
+            <div id="confirmForm" style="display: none;">
+                <h1 class="auth-title">Verify Email</h1>
+                <p class="auth-subtitle">Enter the verification code sent to your email</p>
+                
+                <div class="form-group">
+                    <label class="form-label" for="confirmCode">Verification Code</label>
+                    <input type="text" id="confirmCode" class="form-input" placeholder="Enter 6-digit code">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label" for="newPassword">New Password</label>
+                    <input type="password" id="newPassword" class="form-input" placeholder="Create a password">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label" for="confirmNewPassword">Confirm Password</label>
+                    <input type="password" id="confirmNewPassword" class="form-input" placeholder="Confirm your password">
+                </div>
+                
+                <div class="auth-actions">
+                    <button class="btn" onclick="confirmSignUp()">
+                        <span class="material-icons-round">verified</span>
+                        Verify & Complete
+                    </button>
+                    <button class="link-btn" onclick="showSignIn()">Back to sign in</button>
+                </div>
+            </div>
+
+            <div id="forgotPasswordForm" style="display: none;">
+                <h1 class="auth-title">Reset Password</h1>
+                <p class="auth-subtitle">Enter your email to receive a reset code</p>
+                
+                <div class="form-group">
+                    <label class="form-label" for="forgotEmail">Email</label>
+                    <input type="email" id="forgotEmail" class="form-input" placeholder="Enter your email">
+                </div>
+                
+                <div class="auth-actions">
+                    <button class="btn" onclick="forgotPassword()">
+                        <span class="material-icons-round">email</span>
+                        Send Reset Code
+                    </button>
+                    <button class="link-btn" onclick="showSignIn()">Back to sign in</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const API_URL = 'https://at19psp95f.execute-api.us-east-1.amazonaws.com/prod';
+        let cognitoConfig = null;
+        let userPool = null;
+        let lastPrompt = '';
+        let uploadedFile = null;
+        
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                // Check file size (2MB limit to account for base64 encoding overhead)
+                const maxSize = 2 * 1024 * 1024; // 2MB
+                if (file.size > maxSize) {
+                    alert('File too large. Please select a file smaller than 2MB.');
+                    event.target.value = '';
+                    return;
+                }
+                
+                // If it's an image, compress it
+                if (file.type.startsWith('image/')) {
+                    compressImage(file);
+                } else {
+                    uploadedFile = file;
+                    document.getElementById('fileName').textContent = file.name;
+                    document.getElementById('filePreview').style.display = 'flex';
+                }
+            }
+        }
+        
+        function compressImage(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    // Resize if too large
+                    const maxDimension = 1024;
+                    if (width > maxDimension || height > maxDimension) {
+                        if (width > height) {
+                            height = (height / width) * maxDimension;
+                            width = maxDimension;
+                        } else {
+                            width = (width / height) * maxDimension;
+                            height = maxDimension;
+                        }
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Convert to blob with compression
+                    canvas.toBlob(function(blob) {
+                        uploadedFile = new File([blob], file.name, { type: 'image/jpeg' });
+                        document.getElementById('fileName').textContent = file.name + ' (compressed)';
+                        document.getElementById('filePreview').style.display = 'flex';
+                    }, 'image/jpeg', 0.8);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function clearFile() {
+            uploadedFile = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('filePreview').style.display = 'none';
+        }
+        
+        function addImageMessage(imageData, prompt) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant-message';
+            
+            messageDiv.innerHTML = `
+                <div class="message-avatar">
+                    <span class="material-icons-round">image</span>
+                </div>
+                <div class="message-content">
+                    <p>Generated image: ${prompt}</p>
+                    <img src="data:image/png;base64,${imageData}" style="max-width: 100%; border-radius: 8px; margin-top: 8px;" alt="Generated image">
+                </div>
+            `;
+            
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        function addVideoMessage(videoUrl, prompt) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant-message';
+            
+            messageDiv.innerHTML = `
+                <div class="message-avatar">
+                    <span class="material-icons-round">videocam</span>
+                </div>
+                <div class="message-content">
+                    <p>Generated video: ${prompt}</p>
+                    <a href="${videoUrl}" download="video.mp4" style="display: inline-block; padding: 12px 24px; background: #6366f1; color: white; text-decoration: none; border-radius: 8px; font-weight: 500; margin-top: 8px;">
+                        <span class="material-icons-round" style="vertical-align: middle; margin-right: 8px; font-size: 20px;">download</span>
+                        Download Video
+                    </a>
+                    <p style="margin-top: 8px; font-size: 14px; color: #94a3b8;">Video will be available for 7 days</p>
+                </div>
+            `;
+            
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        // Load configuration securely
+        async function loadConfig() {
+            try {
+                const response = await fetch(`${API_URL}/config`);
+                cognitoConfig = await response.json();
+                
+                const poolData = {
+                    UserPoolId: cognitoConfig.userPoolId,
+                    ClientId: cognitoConfig.userPoolWebClientId
+                };
+                userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+            } catch (error) {
+                console.error('Failed to load configuration:', error);
+                alert('Failed to load application configuration');
+            }
+        }
+
+        // Chat history management
+        let chatHistory = JSON.parse(localStorage.getItem('chatHistory') || '[]');
+        
+        function newChat() {
+            // Save current chat if it has messages
+            saveChatToHistory();
+            
+            conversationId = 'conv-' + Date.now();
+            document.getElementById('chatContainer').innerHTML = `
+                <div class="message assistant-message">
+                    <div class="message-avatar"><span class="material-icons-round">psychology</span></div>
+                    <div class="message-content">Welcome! How can I help you today?</div>
+                </div>`;
+            updateChatHistoryUI();
+        }
+        
+        function saveChatToHistory() {
+            const container = document.getElementById('chatContainer');
+            const messages = container.querySelectorAll('.message');
+            if (messages.length <= 1) return; // Only welcome message
+            
+            const firstUserMsg = container.querySelector('.user-message .message-content');
+            const fullText = firstUserMsg ? firstUserMsg.textContent : 'New Chat';
+            const title = fullText.substring(0, 40) + (fullText.length > 40 ? '...' : '');
+            const preview = fullText.substring(0, 200) + (fullText.length > 200 ? '...' : '');
+            
+            // Check if this conversation already exists
+            const existingIdx = chatHistory.findIndex(c => c.id === conversationId);
+            const chatData = {
+                id: conversationId,
+                title: title,
+                preview: preview,
+                date: new Date().toISOString(),
+                html: container.innerHTML
+            };
+            
+            if (existingIdx >= 0) {
+                chatHistory[existingIdx] = chatData;
+            } else {
+                chatHistory.unshift(chatData);
+            }
+            
+            // Keep only last 100 chats
+            if (chatHistory.length > 100) chatHistory = chatHistory.slice(0, 100);
+            localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
+        }
+        
+        function loadChat(chatId) {
+            saveChatToHistory();
+            const chat = chatHistory.find(c => c.id === chatId);
+            if (chat) {
+                conversationId = chat.id;
+                document.getElementById('chatContainer').innerHTML = chat.html;
+                
+                // Re-render charts
+                document.querySelectorAll('.chart-container[data-chart]').forEach(container => {
+                    try {
+                        const chartData = JSON.parse(container.dataset.chart);
+                        const canvas = container.querySelector('canvas');
+                        if (canvas) {
+                            const newCanvas = document.createElement('canvas');
+                            newCanvas.width = 400;
+                            newCanvas.height = 300;
+                            canvas.replaceWith(newCanvas);
+                            new Chart(newCanvas.getContext('2d'), chartData);
+                        }
+                    } catch (e) { console.error('Chart re-render error:', e); }
+                });
+                
+                // Re-render Mermaid diagrams
+                document.querySelectorAll('.mermaid-container[data-mermaid]').forEach(container => {
+                    try {
+                        const code = container.dataset.mermaid.replace(/&#39;/g, "'");
+                        const mermaidDiv = container.querySelector('.mermaid');
+                        if (mermaidDiv) {
+                            mermaidDiv.innerHTML = code;
+                            mermaidDiv.removeAttribute('data-processed');
+                            mermaid.init(undefined, mermaidDiv);
+                        }
+                    } catch (e) { console.error('Mermaid re-render error:', e); }
+                });
+                
+                updateChatHistoryUI();
+            }
+        }
+        
+        function updateChatHistoryUI() {
+            const list = document.getElementById('chatHistoryList');
+            list.innerHTML = chatHistory.map(chat => `
+                <div class="chat-history-item ${chat.id === conversationId ? 'active' : ''}">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div onclick="loadChat('${chat.id}')" style="flex: 1; cursor: pointer; overflow: hidden;" title="${(chat.preview || chat.title).replace(/"/g, '&quot;').replace(/\n/g, ' ')}">
+                            <div class="chat-title">${chat.title}</div>
+                            <div class="chat-date">${new Date(chat.date).toLocaleDateString()}</div>
+                        </div>
+                        <span class="material-icons-round" onclick="deleteChat('${chat.id}', event)" style="font-size: 14px; cursor: pointer; opacity: 0.5; padding: 2px;" title="Delete">delete</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function deleteChat(chatId, event) {
+            event.stopPropagation();
+            if (confirm('Delete this chat?')) {
+                chatHistory = chatHistory.filter(c => c.id !== chatId);
+                localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
+                if (chatId === conversationId) {
+                    newChat();
+                } else {
+                    updateChatHistoryUI();
+                }
+            }
+        }
+        
+        // Auto-save on message send
+        const originalSendMessage = typeof sendMessage === 'function' ? sendMessage : null;
+        
+        function toggleTheme() {
+            const body = document.body;
+            const themeIcon = document.getElementById('themeIcon');
+            
+            if (body.getAttribute('data-theme') === 'dark') {
+                body.removeAttribute('data-theme');
+                themeIcon.textContent = 'dark_mode';
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.setAttribute('data-theme', 'dark');
+                themeIcon.textContent = 'light_mode';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        // Initialize theme from localStorage
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const themeIcon = document.getElementById('themeIcon');
+            
+            if (savedTheme === 'dark') {
+                document.body.setAttribute('data-theme', 'dark');
+                if (themeIcon) themeIcon.textContent = 'light_mode';
+            }
+        }
+
+        // Initialize configuration on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            initTheme();
+            await loadConfig();
+            checkAuthState();
+        });
+
+        function addMessage(content, isUser) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+            
+            if (!isUser) {
+                // Create avatar and content structure
+                const avatarDiv = document.createElement('div');
+                avatarDiv.className = 'message-avatar';
+                avatarDiv.innerHTML = '<span class="material-icons-round">psychology</span>';
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                
+                // Check for Chart.js data
+                let chartMatch = content.match(/```chart\n([\s\S]*?)\n```/);
+                // Also try to detect raw JSON Chart.js config
+                if (!chartMatch) {
+                    const jsonMatch = content.match(/\{[\s\S]*"type"\s*:\s*"(bar|line|pie|doughnut|scatter)"[\s\S]*"data"\s*:[\s\S]*"labels"[\s\S]*\}/);
+                    if (jsonMatch) {
+                        chartMatch = [null, jsonMatch[0]];
+                    }
+                }
+                if (chartMatch) {
+                    try {
+                        // Remove any JavaScript functions from the JSON
+                        let cleanJson = chartMatch[1]
+                            .replace(/:\s*function\s*\([^)]*\)\s*\{[^}]*\}/g, ': null')
+                            .replace(/"callbacks"\s*:\s*\{[^}]*\}/g, '"callbacks": {}');
+                        const chartData = JSON.parse(cleanJson);
+                        const canvasId = 'chart-' + Date.now();
+                        const chartJson = JSON.stringify(chartData).replace(/'/g, '&#39;');
+                        contentDiv.innerHTML = `<div class="chart-container" data-chart='${chartJson}' style="background: white; padding: 16px; border-radius: 12px; margin: 8px 0;"><canvas id="${canvasId}" width="400" height="300"></canvas></div>`;
+                        messageDiv.appendChild(avatarDiv);
+                        messageDiv.appendChild(contentDiv);
+                        chatContainer.appendChild(messageDiv);
+                        
+                        const ctx = document.getElementById(canvasId).getContext('2d');
+                        new Chart(ctx, chartData);
+                        addRewriteButton(messageDiv);
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                        return;
+                    } catch (e) {
+                        console.error('Chart parsing error:', e);
+                    }
+                }
+                
+                // Check for Mermaid diagrams
+                const mermaidMatch = content.match(/```mermaid\n([\s\S]*?)\n```/);
+                if (mermaidMatch) {
+                    const diagramCode = mermaidMatch[1];
+                    const diagramId = 'mermaid-' + Date.now();
+                    const escapedCode = diagramCode.replace(/'/g, '&#39;');
+                    contentDiv.innerHTML = `<div class="mermaid-container" data-mermaid='${escapedCode}' style="background: white; padding: 16px; border-radius: 12px; margin: 8px 0; text-align: center;"><div class="mermaid" id="${diagramId}">${diagramCode}</div></div>`;
+                    messageDiv.appendChild(avatarDiv);
+                    messageDiv.appendChild(contentDiv);
+                    chatContainer.appendChild(messageDiv);
+                    mermaid.init(undefined, document.getElementById(diagramId));
+                    addRewriteButton(messageDiv);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                    return;
+                }
+                
+                // Check for draw.io diagrams
+                const drawioMatch = content.match(/```drawio\n([\s\S]*?)\n```/);
+                if (drawioMatch) {
+                    const diagramXml = drawioMatch[1];
+                    const diagramId = 'drawio-' + Date.now();
+                    
+                    // Create download button for draw.io file
+                    const blob = new Blob([diagramXml], { type: 'application/xml' });
+                    const url = URL.createObjectURL(blob);
+                    
+                    contentDiv.innerHTML = `
+                        <div style="background: white; padding: 16px; border-radius: 12px; margin: 8px 0;">
+                            <p style="margin-bottom: 12px; color: #64748b;">Draw.io diagram generated. Click below to download:</p>
+                            <a href="${url}" download="diagram.drawio" style="display: inline-block; padding: 12px 24px; background: #6366f1; color: white; text-decoration: none; border-radius: 8px; font-weight: 500;">
+                                <span class="material-icons-round" style="vertical-align: middle; margin-right: 8px; font-size: 20px;">download</span>
+                                Download diagram.drawio
+                            </a>
+                            <p style="margin-top: 12px; font-size: 14px; color: #94a3b8;">Open this file in <a href="https://app.diagrams.net" target="_blank" style="color: #6366f1;">diagrams.net</a> or draw.io desktop app</p>
+                        </div>
+                    `;
+                    
+                    messageDiv.appendChild(avatarDiv);
+                    messageDiv.appendChild(contentDiv);
+                    chatContainer.appendChild(messageDiv);
+                    addRewriteButton(messageDiv);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                    return;
+                }
+                
+                // Format text with proper line breaks and paragraphs
+                const formattedContent = content
+                    .replace(/\n\n/g, '</p><p>')  // Double line breaks = new paragraph
+                    .replace(/\n/g, '<br>')       // Single line breaks = line break
+                    .replace(/^/, '<p>')          // Start with paragraph
+                    .replace(/$/, '</p>');        // End with paragraph
+                
+                contentDiv.innerHTML = formattedContent;
+                messageDiv.appendChild(avatarDiv);
+                messageDiv.appendChild(contentDiv);
+                addRewriteButton(messageDiv);
+            } else {
+                const avatarDiv = document.createElement('div');
+                avatarDiv.className = 'message-avatar';
+                avatarDiv.innerHTML = '<span class="material-icons-round">person</span>';
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                contentDiv.textContent = content;
+                
+                messageDiv.appendChild(avatarDiv);
+                messageDiv.appendChild(contentDiv);
+            }
+            
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function addRewriteButton(messageDiv) {
+            const buttonDiv = document.createElement('div');
+            buttonDiv.innerHTML = `<button class="rewrite-btn" onclick="showModelSelector()" title="Rewrite with different model">♻️ Rewrite</button>`;
+            messageDiv.appendChild(buttonDiv);
+        }
+
+        // Copy all other functions from the original file
+        async function checkAuthState() {
+            if (!userPool) {
+                setTimeout(checkAuthState, 100);
+                return;
+            }
+            
+            try {
+                currentUser = userPool.getCurrentUser();
+                if (currentUser) {
+                    currentUser.getSession((err, session) => {
+                        if (err || !session.isValid()) {
+                            showAuthForm();
+                        } else {
+                            currentUser.getUserAttributes((err, attributes) => {
+                                if (!err) {
+                                    const email = attributes.find(attr => attr.Name === 'email')?.Value;
+                                    userId = 'user-' + btoa(email).replace(/[^a-zA-Z0-9]/g, '').substring(0, 12);
+                                    conversationId = 'conv-' + Date.now();
+                                    document.getElementById('authContainer').style.display = 'none';
+                                    document.getElementById('mainContainer').style.display = 'block';
+                                    document.getElementById('userEmail').textContent = email;
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    showAuthForm();
+                }
+            } catch (error) {
+                console.error('Auth check error:', error);
+                showAuthForm();
+            }
+        }
+
+        function showAuthForm() {
+            document.getElementById('authContainer').style.display = 'flex';
+            document.getElementById('mainContainer').style.display = 'none';
+        }
+
+        function showSignIn() {
+            document.getElementById('signInForm').style.display = 'block';
+            document.getElementById('signUpForm').style.display = 'none';
+            document.getElementById('confirmForm').style.display = 'none';
+            document.getElementById('forgotPasswordForm').style.display = 'none';
+        }
+
+        function showSignUp() {
+            document.getElementById('signInForm').style.display = 'none';
+            document.getElementById('signUpForm').style.display = 'block';
+            document.getElementById('confirmForm').style.display = 'none';
+            document.getElementById('forgotPasswordForm').style.display = 'none';
+        }
+
+        function showConfirm() {
+            document.getElementById('signInForm').style.display = 'none';
+            document.getElementById('signUpForm').style.display = 'none';
+            document.getElementById('confirmForm').style.display = 'block';
+            document.getElementById('forgotPasswordForm').style.display = 'none';
+        }
+
+        function showForgotPassword() {
+            document.getElementById('signInForm').style.display = 'none';
+            document.getElementById('signUpForm').style.display = 'none';
+            document.getElementById('confirmForm').style.display = 'none';
+            document.getElementById('forgotPasswordForm').style.display = 'block';
+        }
+
+        function signIn() {
+            const email = document.getElementById('signInEmail').value;
+            const password = document.getElementById('signInPassword').value;
+            
+            if (!email || !password) {
+                alert('Please enter both email and password');
+                return;
+            }
+            
+            const authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+                Username: email,
+                Password: password
+            });
+            
+            const userData = {
+                Username: email,
+                Pool: userPool
+            };
+            
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+            
+            cognitoUser.authenticateUser(authenticationDetails, {
+                onSuccess: (result) => {
+                    checkAuthState();
+                },
+                onFailure: (err) => {
+                    alert('Sign in failed: ' + err.message);
+                }
+            });
+        }
+
+        function signUp() {
+            const email = document.getElementById('signUpEmail').value;
+            
+            if (!email) {
+                alert('Please enter your email address');
+                return;
+            }
+            
+            const attributeList = [
+                new AmazonCognitoIdentity.CognitoUserAttribute({
+                    Name: 'email',
+                    Value: email
+                })
+            ];
+            
+            userPool.signUp(email, 'PlaceholderPass123!', attributeList, null, (err, result) => {
+                if (err) {
+                    alert('Sign up failed: ' + err.message);
+                    return;
+                }
+                
+                window.signupEmail = email;
+                showConfirm();
+                alert('Please check your email for a verification code');
+            });
+        }
+
+        async function confirmSignUp() {
+            const email = window.signupEmail || document.getElementById('signUpEmail').value;
+            const code = document.getElementById('confirmCode').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPass = document.getElementById('confirmNewPassword').value;
+            
+            if (!code || !newPassword || !confirmPass) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            if (newPassword !== confirmPass) {
+                alert('Passwords do not match');
+                return;
+            }
+            
+            if (newPassword.length < 8) {
+                alert('Password must be at least 8 characters long');
+                return;
+            }
+            
+            const userData = {
+                Username: email,
+                Pool: userPool
+            };
+            
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+            
+            // First confirm the registration
+            cognitoUser.confirmRegistration(code, true, async (err, result) => {
+                if (err) {
+                    alert('Confirmation failed: ' + err.message);
+                    return;
+                }
+                
+                try {
+                    // Set permanent password using admin API
+                    const response = await fetch(`${API_URL}/set-password`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: email,
+                            password: newPassword
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        alert('Registration complete! You can now sign in with your email and password.');
+                        showSignIn();
+                    } else {
+                        alert('Password setup failed: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Password setup failed: ' + error.message);
+                }
+            });
+        }
+
+        function signOut() {
+            if (currentUser) {
+                currentUser.signOut();
+                currentUser = null;
+                showAuthForm();
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        // Update send button icon based on web search toggle
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize chat history UI
+            updateChatHistoryUI();
+            
+            const webSearchToggle = document.getElementById('webSearchToggle');
+            const sendIcon = document.getElementById('sendIcon');
+            const sendButton = document.getElementById('sendButton');
+            const modelSelect = document.getElementById('modelSelect');
+            
+            function updateWebSearchAvailability() {
+                const selectedModel = modelSelect.value;
+                const isNovaModel = selectedModel.includes('nova');
+                
+                if (!isNovaModel) {
+                    webSearchToggle.checked = false;
+                    webSearchToggle.disabled = true;
+                    webSearchToggle.parentElement.style.opacity = '0.5';
+                } else {
+                    webSearchToggle.disabled = false;
+                    webSearchToggle.parentElement.style.opacity = '1';
+                }
+                
+                updateSendIcon();
+            }
+            
+            function updateSendIcon() {
+                if (webSearchToggle.checked && !webSearchToggle.disabled) {
+                    sendIcon.textContent = 'travel_explore';
+                    sendButton.title = 'Send with web search (Nova grounding)';
+                } else {
+                    sendIcon.textContent = 'send';
+                    sendButton.title = 'Send message';
+                }
+            }
+            
+            if (webSearchToggle && sendIcon && sendButton && modelSelect) {
+                webSearchToggle.addEventListener('change', updateSendIcon);
+                modelSelect.addEventListener('change', updateWebSearchAvailability);
+                
+                // Initialize on page load
+                updateWebSearchAvailability();
+            }
+        });
+
+        async function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const prompt = messageInput.value.trim();
+            
+            if (!prompt) return;
+            
+            lastPrompt = prompt;
+            
+            // Show message with file attachment if present
+            let displayMessage = prompt;
+            let attachedFileName = null;
+            if (uploadedFile) {
+                displayMessage = `📎 ${uploadedFile.name}\n\n${prompt}`;
+                attachedFileName = uploadedFile.name;
+            }
+            addMessage(displayMessage, true);
+            messageInput.value = '';
+            
+            const modelId = document.getElementById('modelSelect').value;
+            const enableWebSearch = document.getElementById('webSearchToggle').checked;
+            
+            // Prepare request body
+            const requestBody = {
+                action: 'invoke',
+                modelId: modelId,
+                prompt: prompt,
+                conversationId: conversationId,
+                userId: userId,
+                enableWebSearch: enableWebSearch
+            };
+            
+            // Handle file upload if present
+            if (uploadedFile) {
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    const base64Data = e.target.result.split(',')[1];
+                    requestBody.fileData = base64Data;
+                    requestBody.fileName = uploadedFile.name;
+                    requestBody.fileType = uploadedFile.type;
+                    clearFile();
+                    await sendRequest(requestBody, attachedFileName);
+                };
+                reader.readAsDataURL(uploadedFile);
+            } else {
+                await sendRequest(requestBody);
+            }
+        }
+        
+        async function sendRequest(requestBody, attachedFileName = null) {
+            try {
+                // Check payload size before sending
+                const payloadSize = new Blob([JSON.stringify(requestBody)]).size;
+                const maxPayloadSize = 6 * 1024 * 1024; // 6MB (API Gateway limit is 10MB)
+                
+                console.log('Payload size:', (payloadSize / 1024).toFixed(2), 'KB');
+                
+                if (payloadSize > maxPayloadSize) {
+                    addMessage('Error: Request too large. Please use a smaller image.', false);
+                    return;
+                }
+                
+                console.log('Sending request to:', `${API_URL}/bedrock`);
+                
+                const response = await fetch(`${API_URL}/bedrock`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Origin': window.location.origin
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+                
+                console.log('Response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Response error:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                const data = await response.json();
+                if (data.response) {
+                    if (data.isVideoAsync) {
+                        addVideoAsyncMessage(requestBody.prompt, data.bucket, data.prefix);
+                    } else if (data.isVideo && data.videoUrl) {
+                        addVideoMessage(data.videoUrl, requestBody.prompt);
+                    } else if (data.isImage && data.imageData) {
+                        addImageMessage(data.imageData, requestBody.prompt);
+                    } else {
+                        let responseText = data.response;
+                        if (attachedFileName) {
+                            responseText = `📎 Re: ${attachedFileName}\n\n${responseText}`;
+                        }
+                        addMessage(responseText, false);
+                    }
+                    saveChatToHistory();
+                    updateChatHistoryUI();
+                } else {
+                    addMessage('Error: ' + (data.error || 'Unknown error'), false);
+                }
+            } catch (error) {
+                console.error('Request error:', error);
+                addMessage('Error: Failed to send request. Check browser console for details.', false);
+            }
+        }
+        
+        function addVideoAsyncMessage(prompt, bucket, prefix) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant-message';
+            
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'message-avatar';
+            avatarDiv.innerHTML = '<span class="material-icons-round">psychology</span>';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            
+            const linkId = 'video-link-' + Date.now();
+            contentDiv.innerHTML = `
+                <p>🎬 Video generation started for: "<em>${prompt}</em>"</p>
+                <p>⏱️ This takes 2-5 minutes to complete.</p>
+                <p id="${linkId}"><button onclick="checkVideoStatus('${bucket}', '${prefix}', '${linkId}')" style="padding: 10px 20px; background: var(--aws-orange); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 500;">Check Status & Get Download Link</button></p>
+            `;
+            
+            messageDiv.appendChild(avatarDiv);
+            messageDiv.appendChild(contentDiv);
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        async function checkVideoStatus(bucket, prefix, linkId) {
+            const linkEl = document.getElementById(linkId);
+            linkEl.innerHTML = '<span style="color: var(--on-surface-variant);">Checking...</span>';
+            
+            try {
+                const response = await fetch(`${API_URL}/bedrock`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'getVideoUrl', userId, bucket, prefix })
+                });
+                const data = await response.json();
+                
+                if (data.status === 'complete') {
+                    linkEl.innerHTML = `<a href="${data.url}" target="_blank" style="display: inline-block; padding: 10px 20px; background: var(--aws-orange); color: white; text-decoration: none; border-radius: 8px; font-weight: 500;">📥 Download Video</a>`;
+                } else {
+                    linkEl.innerHTML = `<span style="color: var(--on-surface-variant);">⏳ Still generating... </span><button onclick="checkVideoStatus('${bucket}', '${prefix}', '${linkId}')" style="padding: 8px 16px; background: var(--surface-container); border: 1px solid var(--outline); border-radius: 6px; cursor: pointer;">Try Again</button>`;
+                }
+            } catch (e) {
+                linkEl.innerHTML = `<span style="color: red;">Error checking status</span>`;
+            }
+        }
+
+        function showModelSelector() {
+            if (!lastPrompt) {
+                alert('No previous prompt to rewrite');
+                return;
+            }
+            
+            const modelSelect = document.getElementById('modelSelect');
+            const currentModel = modelSelect.value;
+            
+            const options = Array.from(modelSelect.options).filter(opt => opt.value !== currentModel);
+            if (options.length === 0) {
+                alert('No other models available');
+                return;
+            }
+            
+            // Create modal for model selection
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.5);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 1000;
+            `;
+            
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: var(--surface);
+                border-radius: 12px;
+                padding: 24px;
+                max-width: 400px;
+                width: 90%;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            `;
+            
+            dialog.innerHTML = `
+                <h3 style="margin: 0 0 16px 0; color: var(--on-surface);">Select Model to Rewrite</h3>
+                <div id="modelOptions" style="margin-bottom: 20px;"></div>
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button id="cancelRewrite" class="btn btn-secondary">Cancel</button>
+                </div>
+            `;
+            
+            const optionsContainer = dialog.querySelector('#modelOptions');
+            options.forEach(option => {
+                const button = document.createElement('button');
+                button.className = 'btn btn-primary';
+                button.style.cssText = `
+                    display: block;
+                    width: 100%;
+                    margin-bottom: 8px;
+                    text-align: left;
+                    padding: 12px 16px;
+                `;
+                button.textContent = option.text;
+                button.onclick = () => rewriteWithModel(option, modal);
+                optionsContainer.appendChild(button);
+            });
+            
+            dialog.querySelector('#cancelRewrite').onclick = () => {
+                document.body.removeChild(modal);
+            };
+            
+            modal.appendChild(dialog);
+            document.body.appendChild(modal);
+            
+            // Close on background click
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    document.body.removeChild(modal);
+                }
+            };
+        }
+        
+        async function rewriteWithModel(selectedOption, modal) {
+            document.body.removeChild(modal);
+            
+            addMessage(`♻️ Rewriting with ${selectedOption.text}...`, false);
+            
+            try {
+                const enableWebSearch = document.getElementById('webSearchToggle').checked;
+                const response = await fetch(`${API_URL}/bedrock`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Origin': window.location.origin
+                    },
+                    body: JSON.stringify({
+                        action: 'invoke',
+                        modelId: selectedOption.value,
+                        prompt: lastPrompt,
+                        conversationId: conversationId + '-rewrite',
+                        userId: userId,
+                        enableWebSearch: enableWebSearch
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.response) {
+                    addMessage(data.response, false);
+                } else {
+                    addMessage('Error: ' + (data.error || 'Unknown error'), false);
+                }
+            } catch (error) {
+                addMessage('Error: ' + error.message, false);
+            }
+        }
+    </script>
+</body>
+</html>

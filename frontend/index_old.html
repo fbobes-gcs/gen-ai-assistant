@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Bedrock Assistant</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { width: 800px; margin: 0 auto; background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); resize: both; overflow: auto; min-width: 400px; min-height: 500px; }
+        .chat-container { height: 400px; border: 1px solid #ddd; border-radius: 4px; padding: 10px; overflow-y: auto; margin-bottom: 20px; background: #fafafa; }
+        .message { margin-bottom: 15px; padding: 10px; border-radius: 6px; }
+        .user-message { background: #007bff; color: white; margin-left: 20%; }
+        .assistant-message { background: #e9ecef; margin-right: 20%; white-space: pre-wrap; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        select, input, button { padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        input { flex: 1; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .mermaid { background: white; padding: 10px; border-radius: 4px; margin: 10px 0; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+        
+        let currentUser = null;
+    </script>
+</head>
+<body>
+    <div class="container" id="mainContainer" style="display: none;">
+        <h1>Bedrock Assistant</h1>
+        <div style="text-align: right; margin-bottom: 10px;">
+            <span id="userEmail"></span>
+            <button onclick="signOut()" style="margin-left: 10px; padding: 5px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Sign Out</button>
+        </div>
+        <div>
+            <label>Model:</label>
+            <select id="modelSelect">
+                <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">Claude Sonnet 4.5</option>
+                <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">Claude Haiku 4.5</option>
+                <option value="us.amazon.nova-premier-v1:0">Nova Premier</option>
+                <option value="us.amazon.nova-2-lite-v1:0">Nova 2 Lite</option>
+                <option value="us.amazon.nova-pro-v1:0">Nova Pro</option>
+                <option value="us.meta.llama4-scout-17b-instruct-v1:0">Llama 4 Scout</option>
+                <option value="us.meta.llama4-maverick-17b-instruct-v1:0">Llama 4 Maverick</option>
+                <option value="us.anthropic.claude-3-5-sonnet-20241022-v2:0">Claude 3.5 Sonnet v2</option>
+            </select>
+        </div>
+        <div class="chat-container" id="chatContainer"></div>
+        <div class="input-group">
+            <input type="text" id="promptInput" placeholder="Enter your prompt..." onkeypress="handleKeyPress(event)">
+            <button onclick="sendMessage()" id="sendButton">Send</button>
+        </div>
+    </div>
+
+    <div class="container" id="authContainer">
+        <h1>Bedrock Assistant - Sign In</h1>
+        <div id="signInForm">
+            <input type="email" id="email" placeholder="Email" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <input type="password" id="password" placeholder="Password" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <button onclick="signIn()" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin: 10px 0;">Sign In</button>
+            <button onclick="showSignUp()" style="width: 100%; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Sign Up</button>
+            <button onclick="showForgotPassword()" style="width: 100%; padding: 10px; background: #ffc107; color: black; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px;">Forgot Password?</button>
+        </div>
+        <div id="signUpForm" style="display: none;">
+            <input type="email" id="signUpEmail" placeholder="Email" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <button onclick="signUp()" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin: 10px 0;">Send Confirmation Code</button>
+            <button onclick="showSignIn()" style="width: 100%; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Back to Sign In</button>
+        </div>
+        <div id="confirmForm" style="display: none;">
+            <p>Please check your email and enter the confirmation code, then set your password:</p>
+            <input type="text" id="confirmCode" placeholder="Confirmation Code" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <input type="password" id="newPassword" placeholder="Set Password (8+ chars)" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <input type="password" id="confirmNewPassword" placeholder="Confirm Password" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <button onclick="confirmSignUp()" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Complete Registration</button>
+        </div>
+        <div id="forgotPasswordForm" style="display: none;">
+            <p>Enter your email to reset your password:</p>
+            <input type="email" id="forgotEmail" placeholder="Email" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <button onclick="forgotPassword()" style="width: 100%; padding: 10px; background: #ffc107; color: black; border: none; border-radius: 4px; cursor: pointer; margin: 10px 0;">Send Reset Code</button>
+            <button onclick="showSignIn()" style="width: 100%; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Back to Sign In</button>
+        </div>
+        <div id="resetPasswordForm" style="display: none;">
+            <p>Enter the reset code and your new password:</p>
+            <input type="text" id="resetCode" placeholder="Reset Code" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <input type="password" id="resetPassword" placeholder="New Password (8+ chars)" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <input type="password" id="confirmResetPassword" placeholder="Confirm New Password" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+            <button onclick="resetPassword()" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Reset Password</button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'https://at19psp95f.execute-api.us-east-1.amazonaws.com/prod';
+        let cognitoConfig = null;
+        let userPool = null;
+        
+        // Load configuration securely
+        async function loadConfig() {
+            try {
+                const response = await fetch(`${API_URL}/config`);
+                cognitoConfig = await response.json();
+                
+                const poolData = {
+                    UserPoolId: cognitoConfig.userPoolId,
+                    ClientId: cognitoConfig.userPoolWebClientId
+                };
+                userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+            } catch (error) {
+                console.error('Failed to load configuration:', error);
+                alert('Failed to load application configuration');
+            }
+        }
+
+        const userId = 'user-' + Math.random().toString(36).substr(2, 9);
+        let conversationId = 'conv-' + Date.now();
+
+        // Initialize configuration on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            await loadConfig();
+            checkAuthState();
+        });
+
+        function addMessage(content, isUser) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+            
+            if (!isUser) {
+                // Check for Chart.js data
+                const chartMatch = content.match(/```chart\n([\s\S]*?)\n```/);
+                if (chartMatch) {
+                    try {
+                        const chartData = JSON.parse(chartMatch[1]);
+                        const canvasId = 'chart-' + Date.now();
+                        messageDiv.innerHTML = `<canvas id="${canvasId}" width="400" height="200"></canvas>`;
+                        chatContainer.appendChild(messageDiv);
+                        
+                        const ctx = document.getElementById(canvasId).getContext('2d');
+                        new Chart(ctx, chartData);
+                        addRewriteButton(messageDiv);
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                        return;
+                    } catch (e) {
+                        console.error('Chart parsing error:', e);
+                    }
+                }
+                
+                // Check for Mermaid diagrams
+                const mermaidMatch = content.match(/```mermaid\n([\s\S]*?)\n```/);
+                if (mermaidMatch || content.includes('graph') || content.includes('flowchart') || content.includes('sequenceDiagram')) {
+                    if (mermaidMatch) {
+                        const diagramCode = mermaidMatch[1];
+                        const diagramId = 'mermaid-' + Date.now();
+                        messageDiv.innerHTML = `<div class="mermaid" id="${diagramId}">${diagramCode}</div>`;
+                        chatContainer.appendChild(messageDiv);
+                        mermaid.init(undefined, document.getElementById(diagramId));
+                        addRewriteButton(messageDiv);
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                        return;
+                    }
+                }
+                
+                messageDiv.textContent = content;
+                chatContainer.appendChild(messageDiv);
+                addRewriteButton(messageDiv);
+            } else {
+                messageDiv.textContent = content;
+                chatContainer.appendChild(messageDiv);
+            }
+            
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function addRewriteButton(messageDiv) {
+            const buttonDiv = document.createElement('div');
+            buttonDiv.style.cssText = 'margin-top: 5px; text-align: left;';
+            buttonDiv.innerHTML = `
+                <button onclick="showModelSelector()" style="background: none; border: none; font-size: 16px; cursor: pointer; opacity: 0.6; padding: 2px;" title="Rewrite with different model">
+                    ♻️
+                </button>
+            `;
+            messageDiv.parentNode.insertBefore(buttonDiv, messageDiv.nextSibling);
+        }
+
+        function showModelSelector() {
+            if (!lastPrompt) {
+                alert('No previous prompt to rewrite');
+                return;
+            }
+            
+            const modelSelect = document.getElementById('modelSelect');
+            const currentModel = modelSelect.value;
+            
+            // Get all model options except current one
+            const options = Array.from(modelSelect.options).filter(opt => opt.value !== currentModel);
+            if (options.length === 0) {
+                alert('No other models available');
+                return;
+            }
+            
+            // Create dropdown HTML
+            let optionsHtml = options.map(opt => 
+                `<option value="${opt.value}">${opt.text}</option>`
+            ).join('');
+            
+            // Create modal dialog
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;';
+            modal.innerHTML = `
+                <div style="background: white; padding: 20px; border-radius: 8px; min-width: 300px;">
+                    <h3 style="margin-top: 0;">Select model to rewrite with:</h3>
+                    <select id="modelChoice" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+                        ${optionsHtml}
+                    </select>
+                    <div style="text-align: right; margin-top: 15px;">
+                        <button onclick="cancelModelSelection()" style="margin-right: 10px; padding: 8px 15px; border: 1px solid #ddd; background: white; color: black; border-radius: 4px; cursor: pointer;">Cancel</button>
+                        <button onclick="confirmModelSelection()" style="padding: 8px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Rewrite</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            window.currentModal = modal;
+        }
+
+        function cancelModelSelection() {
+            if (window.currentModal) {
+                document.body.removeChild(window.currentModal);
+                window.currentModal = null;
+            }
+        }
+
+        function confirmModelSelection() {
+            const modelChoice = document.getElementById('modelChoice');
+            const selectedValue = modelChoice.value;
+            const selectedText = modelChoice.options[modelChoice.selectedIndex].text;
+            
+            const modelSelect = document.getElementById('modelSelect');
+            modelSelect.value = selectedValue;
+            
+            // Add rewrite message
+            addMessage(`♻️ Rewriting with ${selectedText}...`, false);
+            
+            // Send the same prompt with new model
+            sendMessageWithPrompt(lastPrompt);
+            
+            // Close modal
+            cancelModelSelection();
+        }
+
+        let lastPrompt = '';
+
+        function rewriteWithDifferentModel() {
+            // This function is now replaced by showModelSelector()
+            showModelSelector();
+        }
+
+        async function sendMessage() {
+            const promptInput = document.getElementById('promptInput');
+            const prompt = promptInput.value.trim();
+            if (!prompt) return;
+            
+            lastPrompt = prompt;
+            await sendMessageWithPrompt(prompt);
+            promptInput.value = '';
+        }
+
+        async function sendMessageWithPrompt(prompt) {
+            const modelSelect = document.getElementById('modelSelect');
+            const sendButton = document.getElementById('sendButton');
+            
+            addMessage(prompt, true);
+            sendButton.disabled = true;
+            sendButton.textContent = 'Sending...';
+
+            try {
+                const response = await fetch(`${API_URL}/bedrock`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'invoke',
+                        modelId: modelSelect.value,
+                        prompt,
+                        conversationId,
+                        userId
+                    })
+                });
+
+                const data = await response.json();
+                if (data.response) {
+                    addMessage(data.response, false);
+                } else {
+                    addMessage('Error: ' + (data.error || 'Unknown error'), false);
+                }
+            } catch (error) {
+                addMessage('Error: ' + error.message, false);
+            }
+
+            sendButton.disabled = false;
+            sendButton.textContent = 'Send';
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        // Authentication functions
+        async function checkAuthState() {
+            if (!userPool) {
+                setTimeout(checkAuthState, 100);
+                return;
+            }
+            
+            try {
+                currentUser = userPool.getCurrentUser();
+                if (currentUser) {
+                    currentUser.getSession((err, session) => {
+                        if (err || !session.isValid()) {
+                            showAuthForm();
+                        } else {
+                            currentUser.getUserAttributes((err, attributes) => {
+                                if (!err) {
+                                    const email = attributes.find(attr => attr.Name === 'email')?.Value;
+                                    document.getElementById('authContainer').style.display = 'none';
+                                    document.getElementById('mainContainer').style.display = 'block';
+                                    document.getElementById('userEmail').textContent = email;
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    showAuthForm();
+                }
+            } catch (error) {
+                showAuthForm();
+            }
+        }
+
+        function showAuthForm() {
+            document.getElementById('authContainer').style.display = 'block';
+            document.getElementById('mainContainer').style.display = 'none';
+        }
+
+        async function signIn() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            const authenticationData = {
+                Username: email,
+                Password: password
+            };
+            
+            const authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails(authenticationData);
+            const userData = {
+                Username: email,
+                Pool: userPool
+            };
+            
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+            
+            cognitoUser.authenticateUser(authenticationDetails, {
+                onSuccess: (result) => {
+                    checkAuthState();
+                },
+                onFailure: (err) => {
+                    alert('Sign in failed: ' + err.message);
+                }
+            });
+        }
+
+        async function signUp() {
+            const email = document.getElementById('signUpEmail').value;
+            
+            if (!email) {
+                alert('Please enter your email address');
+                return;
+            }
+            
+            // Store email for later use
+            window.signupEmail = email;
+            
+            const attributeList = [
+                new AmazonCognitoIdentity.CognitoUserAttribute({
+                    Name: 'email',
+                    Value: email
+                })
+            ];
+            
+            // Use email as username and a placeholder password
+            userPool.signUp(email, 'PlaceholderPass123!', attributeList, null, (err, result) => {
+                if (err) {
+                    alert('Sign up failed: ' + err.message);
+                    return;
+                }
+                document.getElementById('signUpForm').style.display = 'none';
+                document.getElementById('confirmForm').style.display = 'block';
+            });
+        }
+
+        async function confirmSignUp() {
+            const email = window.signupEmail || document.getElementById('signUpEmail').value;
+            const code = document.getElementById('confirmCode').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPass = document.getElementById('confirmNewPassword').value;
+            
+            if (!code || !newPassword || !confirmPass) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            if (newPassword !== confirmPass) {
+                alert('Passwords do not match');
+                return;
+            }
+            
+            if (newPassword.length < 8) {
+                alert('Password must be at least 8 characters long');
+                return;
+            }
+            
+            const userData = {
+                Username: email,
+                Pool: userPool
+            };
+            
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+            
+            // First confirm the registration
+            cognitoUser.confirmRegistration(code, true, async (err, result) => {
+                if (err) {
+                    alert('Confirmation failed: ' + err.message);
+                    return;
+                }
+                
+                try {
+                    // Set permanent password using admin API
+                    const response = await fetch(`${API_URL}/set-password`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: email,
+                            password: newPassword
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        alert('Registration complete! You can now sign in with your email and password.');
+                        showSignIn();
+                    } else {
+                        alert('Password setup failed: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Password setup failed: ' + error.message);
+                }
+            });
+        }
+
+        function showForgotPassword() {
+            document.getElementById('signInForm').style.display = 'none';
+            document.getElementById('forgotPasswordForm').style.display = 'block';
+        }
+
+        async function forgotPassword() {
+            const email = document.getElementById('forgotEmail').value;
+            
+            if (!email) {
+                alert('Please enter your email address');
+                return;
+            }
+            
+            const userData = {
+                Username: email,
+                Pool: userPool
+            };
+            
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+            
+            cognitoUser.forgotPassword({
+                onSuccess: (data) => {
+                    alert('Reset code sent to your email!');
+                    document.getElementById('forgotPasswordForm').style.display = 'none';
+                    document.getElementById('resetPasswordForm').style.display = 'block';
+                },
+                onFailure: (err) => {
+                    alert('Failed to send reset code: ' + err.message);
+                }
+            });
+        }
+
+        async function resetPassword() {
+            const email = document.getElementById('forgotEmail').value;
+            const code = document.getElementById('resetCode').value;
+            const newPassword = document.getElementById('resetPassword').value;
+            const confirmPass = document.getElementById('confirmResetPassword').value;
+            
+            if (!code || !newPassword || !confirmPass) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            if (newPassword !== confirmPass) {
+                alert('Passwords do not match');
+                return;
+            }
+            
+            if (newPassword.length < 8) {
+                alert('Password must be at least 8 characters long');
+                return;
+            }
+            
+            const userData = {
+                Username: email,
+                Pool: userPool
+            };
+            
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+            
+            cognitoUser.confirmPassword(code, newPassword, {
+                onSuccess: () => {
+                    alert('Password reset successful! Please sign in with your new password.');
+                    showSignIn();
+                },
+                onFailure: (err) => {
+                    alert('Password reset failed: ' + err.message);
+                }
+            });
+        }
+
+        async function signOut() {
+            const cognitoUser = userPool.getCurrentUser();
+            if (cognitoUser) {
+                cognitoUser.signOut();
+            }
+            
+            // Force page reload to ensure clean state
+            window.location.reload();
+        }
+
+        function showSignUp() {
+            document.getElementById('signInForm').style.display = 'none';
+            document.getElementById('signUpForm').style.display = 'block';
+            document.getElementById('confirmForm').style.display = 'none';
+        }
+
+        function showSignIn() {
+            document.getElementById('signUpForm').style.display = 'none';
+            document.getElementById('confirmForm').style.display = 'none';
+            document.getElementById('forgotPasswordForm').style.display = 'none';
+            document.getElementById('resetPasswordForm').style.display = 'none';
+            document.getElementById('signInForm').style.display = 'block';
+            
+            // Clear all form fields
+            document.getElementById('email').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('signUpEmail').value = '';
+            document.getElementById('confirmCode').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmNewPassword').value = '';
+            document.getElementById('forgotEmail').value = '';
+            document.getElementById('resetCode').value = '';
+            document.getElementById('resetPassword').value = '';
+            document.getElementById('confirmResetPassword').value = '';
+        }
+
+        // Load conversation history on page load
+        window.onload = async function() {
+            // Check authentication state
+            checkAuthState();
+            
+            try {
+                const response = await fetch(`${API_URL}/bedrock`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'history', userId })
+                });
+                const data = await response.json();
+                // Display recent conversations if needed
+            } catch (error) {
+                console.log('Could not load history:', error);
+            }
+        };
+    </script>
+</body>
+</html>

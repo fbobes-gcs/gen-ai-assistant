@@ -1,0 +1,34 @@
+# CDK generated files
+cdk.out/
+
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.production.local
+.env.test.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# CDK Context (contains account/region info)
+cdk.context.json
+
+# Generated reports
+aws_cost_optimization_report.html
+aws_cost_optimization_report.md
+security-review.html
+
+# Local configuration with sensitive values
+cdk.context.local.json
