@@ -1291,7 +1291,7 @@
             checkAuthState();
         });
 
-        function addMessage(content, isUser) {
+        function addMessage(content, isUser, insertAfter = null, promptForRewrite = null) {
             const chatContainer = document.getElementById('chatContainer');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
@@ -1330,7 +1330,7 @@
                         
                         const ctx = document.getElementById(canvasId).getContext('2d');
                         new Chart(ctx, chartData);
-                        addRewriteButton(messageDiv);
+                        addRewriteButton(messageDiv, lastPrompt);
                         chatContainer.scrollTop = chatContainer.scrollHeight;
                         return;
                     } catch (e) {
@@ -1394,7 +1394,7 @@
                 contentDiv.innerHTML = formattedContent;
                 messageDiv.appendChild(avatarDiv);
                 messageDiv.appendChild(contentDiv);
-                addRewriteButton(messageDiv);
+                addRewriteButton(messageDiv, promptForRewrite || lastPrompt);
             } else {
                 const avatarDiv = document.createElement('div');
                 avatarDiv.className = 'message-avatar';
@@ -1440,11 +1440,16 @@
                 });
             }
             
-            chatContainer.appendChild(messageDiv);
+            // Insert message at the appropriate location
+            if (insertAfter) {
+                insertAfter.parentNode.insertBefore(messageDiv, insertAfter.nextSibling);
+            } else {
+                chatContainer.appendChild(messageDiv);
+            }
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
-        function addRewriteButton(messageDiv) {
+        function addRewriteButton(messageDiv, associatedPrompt = null) {
             const contentDiv = messageDiv.querySelector('.message-content');
             const buttonDiv = document.createElement('div');
             buttonDiv.style.cssText = 'display: flex; gap: 8px; margin-top: 8px;';
@@ -1452,6 +1457,10 @@
                 <button class="rewrite-btn" title="Rewrite with different model">♻️ Rewrite</button>
                 <button class="rewrite-btn" onclick="deleteMessage(this)" title="Delete this response">🗑️ Delete</button>
             `;
+            
+            // Store the prompt with this message
+            const promptToUse = associatedPrompt || lastPrompt;
+            messageDiv.dataset.associatedPrompt = promptToUse;
             
             // Add click handler for rewrite button that targets this specific message
             const rewriteBtn = buttonDiv.querySelector('.rewrite-btn');
@@ -1740,9 +1749,15 @@
             
             // Store original content and references
             const originalText = contentDiv.textContent;
+            let assistantMessage = userMessageDiv.nextElementSibling;
+            // Find the first assistant message after this user message
+            while (assistantMessage && !assistantMessage.classList.contains('assistant-message')) {
+                assistantMessage = assistantMessage.nextElementSibling;
+            }
+            
             editingMessagePair = {
                 userMessage: userMessageDiv,
-                assistantMessage: userMessageDiv.nextElementSibling,
+                assistantMessage: assistantMessage,
                 originalContent: originalText,
                 contentDiv: contentDiv
             };
@@ -1791,9 +1806,12 @@
         function saveInlineEdit(newContent) {
             if (!editingMessagePair || !newContent.trim()) return;
             
-            // Remove assistant message if it exists
-            if (editingMessagePair.assistantMessage && editingMessagePair.assistantMessage.classList.contains('assistant-message')) {
-                editingMessagePair.assistantMessage.remove();
+            // Find and remove all assistant messages after this user message
+            let nextElement = editingMessagePair.userMessage.nextElementSibling;
+            while (nextElement && nextElement.classList.contains('assistant-message')) {
+                const elementToRemove = nextElement;
+                nextElement = nextElement.nextElementSibling;
+                elementToRemove.remove();
             }
             
             // Restore content div and update with new content
@@ -1829,7 +1847,10 @@
                 enableWebSearch: enableWebSearch
             };
             
-            await sendRequest(requestBody);
+            // Store the user message to insert response after it
+            const userMessageForInsertion = editingMessagePair ? editingMessagePair.userMessage : null;
+            
+            await sendRequest(requestBody, userMessageForInsertion);
         }
 
         async function sendMessage() {
@@ -1873,7 +1894,7 @@
                     requestBody.fileName = uploadedFile.name;
                     requestBody.fileType = uploadedFile.type;
                     clearFile();
-                    await sendRequest(requestBody, attachedFileName);
+                    await sendRequest(requestBody, null, attachedFileName);
                 };
                 reader.readAsDataURL(uploadedFile);
             } else {
@@ -1881,7 +1902,7 @@
             }
         }
         
-        async function sendRequest(requestBody, attachedFileName = null) {
+        async function sendRequest(requestBody, insertAfter = null, attachedFileName = null) {
             try {
                 // Check payload size before sending
                 const payloadSize = new Blob([JSON.stringify(requestBody)]).size;
@@ -1926,16 +1947,25 @@
                         if (attachedFileName) {
                             responseText = `📎 Re: ${attachedFileName}\n\n${responseText}`;
                         }
-                        addMessage(responseText, false);
+                        addMessage(responseText, false, insertAfter, requestBody.prompt);
+                        
+                        // Update the associated prompt for any assistant messages if this was an edit
+                        if (insertAfter) {
+                            const assistantMessages = document.querySelectorAll('.assistant-message');
+                            const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+                            if (lastAssistantMessage && lastAssistantMessage.dataset.associatedPrompt) {
+                                lastAssistantMessage.dataset.associatedPrompt = requestBody.prompt;
+                            }
+                        }
                     }
                     saveChatToHistory();
                     updateChatHistoryUI();
                 } else {
-                    addMessage('Error: ' + (data.error || 'Unknown error'), false);
+                    addMessage('Error: ' + (data.error || 'Unknown error'), false, insertAfter, requestBody.prompt);
                 }
             } catch (error) {
                 console.error('Request error:', error);
-                addMessage('Error: Failed to send request. Check browser console for details.', false);
+                addMessage('Error: Failed to send request. Check browser console for details.', false, insertAfter, requestBody.prompt);
             }
         }
         
@@ -1987,8 +2017,9 @@
         }
 
         function showModelSelector(targetMessageDiv) {
-            if (!lastPrompt) {
-                alert('No previous prompt to rewrite');
+            const associatedPrompt = targetMessageDiv.dataset.associatedPrompt;
+            if (!associatedPrompt) {
+                alert('No prompt associated with this message');
                 return;
             }
             
@@ -2064,40 +2095,15 @@
                 }
             };
         }
-            });
-            
-            dialog.querySelector('#cancelRewrite').onclick = () => {
-                document.body.removeChild(modal);
-            };
-            
-            modal.appendChild(dialog);
-            document.body.appendChild(modal);
-            
-            // Close on background click
-            modal.onclick = (e) => {
-                if (e.target === modal) {
-                    document.body.removeChild(modal);
-                }
-            };
-        }
         
         async function rewriteWithModel(selectedOption, modal, targetMessageDiv) {
             document.body.removeChild(modal);
             
-            // Create rewrite message and insert it right after the target message
-            const rewriteMessageDiv = document.createElement('div');
-            rewriteMessageDiv.className = 'message assistant-message';
-            rewriteMessageDiv.innerHTML = `
-                <div class="message-avatar">
-                    <span class="material-icons-round">psychology</span>
-                </div>
-                <div class="message-content">
-                    <p>♻️ Rewriting with ${selectedOption.text}...</p>
-                </div>
-            `;
+            const associatedPrompt = targetMessageDiv.dataset.associatedPrompt;
+            const contentDiv = targetMessageDiv.querySelector('.message-content');
             
-            // Insert right after the target message
-            targetMessageDiv.parentNode.insertBefore(rewriteMessageDiv, targetMessageDiv.nextSibling);
+            // Show loading state in the existing message
+            contentDiv.innerHTML = `<p>♻️ Rewriting with ${selectedOption.text}...</p>`;
             
             try {
                 const enableWebSearch = document.getElementById('webSearchToggle').checked;
@@ -2110,7 +2116,7 @@
                     body: JSON.stringify({
                         action: 'invoke',
                         modelId: selectedOption.value,
-                        prompt: lastPrompt,
+                        prompt: associatedPrompt,
                         conversationId: conversationId + '-rewrite',
                         userId: userId,
                         enableWebSearch: enableWebSearch
@@ -2118,7 +2124,6 @@
                 });
                 
                 const data = await response.json();
-                const contentDiv = rewriteMessageDiv.querySelector('.message-content');
                 
                 if (data.response) {
                     // Format the response with proper line breaks and links
@@ -2130,17 +2135,13 @@
                         .replace(/$/, '</p>');
                     
                     contentDiv.innerHTML = formattedContent;
-                    addRewriteButton(rewriteMessageDiv);
+                    addRewriteButton(targetMessageDiv, associatedPrompt);
                 } else {
                     contentDiv.innerHTML = '<p>Error: ' + (data.error || 'Unknown error') + '</p>';
                 }
             } catch (error) {
-                const contentDiv = rewriteMessageDiv.querySelector('.message-content');
                 contentDiv.innerHTML = '<p>Error: ' + error.message + '</p>';
             }
-            
-            // Scroll to the new message
-            rewriteMessageDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     </script>
 </body>

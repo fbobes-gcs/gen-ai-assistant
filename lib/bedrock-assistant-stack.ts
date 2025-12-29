@@ -336,7 +336,7 @@ exports.handler = async (event) => {
     const bedrockLambda = new lambda.Function(this, 'BedrockFunction', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      timeout: cdk.Duration.seconds(60),
+      timeout: cdk.Duration.seconds(120),
       memorySize: 512,
       code: lambda.Code.fromInline(`
 const { BedrockRuntimeClient, InvokeModelCommand, ConverseCommand, StartAsyncInvokeCommand, GetAsyncInvokeCommand } = require('@aws-sdk/client-bedrock-runtime');
@@ -1206,6 +1206,7 @@ Please provide a comprehensive analysis based on this financial data and your kn
   } catch (error) {
     console.error('Bedrock API error:', error);
     console.error('Error details:', JSON.stringify(error, null, 2));
+    console.error('Stack trace:', error.stack);
     return {
       statusCode: 500,
       headers,
