@@ -58,6 +58,12 @@ export class BedrockAssistantStack extends cdk.Stack {
       }
     });
 
+    // Create secret for Tavily API key
+    const tavilySecret = new secretsmanager.Secret(this, 'TavilyApiKey', {
+      description: 'Tavily Search API key for web search functionality',
+      secretStringValue: cdk.SecretValue.unsafePlainText('REDACTED_API_KEY')
+    });
+
     // Get existing hosted zone
     const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
       domainName: appDomain
@@ -331,8 +337,8 @@ exports.handler = async (event) => {
     const bedrockLambda = new lambda.Function(this, 'BedrockFunction', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 256,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 512,
       code: lambda.Code.fromInline(`
 const { BedrockRuntimeClient, InvokeModelCommand, ConverseCommand, StartAsyncInvokeCommand, GetAsyncInvokeCommand } = require('@aws-sdk/client-bedrock-runtime');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
@@ -348,6 +354,7 @@ const s3Client = new S3Client({});
 
 let cachedModels = null;
 let cachedDomain = null;
+let cachedTavilyKey = null;
 let lastCacheTime = 0;
 
 async function getAllowedModels() {
@@ -380,6 +387,246 @@ async function getAllowedModels() {
   }
 }
 
+async function getTavilyApiKey() {
+  if (cachedTavilyKey) return cachedTavilyKey;
+  
+  try {
+    const response = await secretsClient.send(new GetSecretValueCommand({
+      SecretId: process.env.TAVILY_API_SECRET
+    }));
+    cachedTavilyKey = response.SecretString;
+    return cachedTavilyKey;
+  } catch (error) {
+    console.warn('Failed to get Tavily API key from secrets:', error);
+    return null;
+  }
+}
+
+async function performWebSearch(query, tavilyApiKey) {
+  if (!tavilyApiKey) return null;
+  
+  try {
+    const response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        api_key: tavilyApiKey,
+        query: query,
+        search_depth: 'basic',
+        include_answer: true,
+        include_raw_content: false,
+        max_results: 5
+      })
+    });
+    
+    if (!response.ok) {
+      console.error('Tavily API error:', response.status, response.statusText);
+      return null;
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Web search error:', error);
+    return null;
+  }
+}
+
+async function getStockData(symbol) {
+  try {
+    // Get basic stock info
+    const quoteResponse = await fetch(\`https://query1.finance.yahoo.com/v8/finance/chart/\${symbol}\`);
+    if (!quoteResponse.ok) return null;
+    
+    const quoteData = await quoteResponse.json();
+    const result = quoteData.chart.result[0];
+    const meta = result.meta;
+    const quote = result.indicators.quote[0];
+    
+    // Get additional company info
+    const summaryResponse = await fetch(\`https://query2.finance.yahoo.com/v10/finance/quoteSummary/\${symbol}?modules=summaryDetail,financialData,defaultKeyStatistics\`);
+    let summaryData = null;
+    if (summaryResponse.ok) {
+      summaryData = await summaryResponse.json();
+    }
+    
+    const currentPrice = meta.regularMarketPrice;
+    const previousClose = meta.previousClose;
+    const change = currentPrice - previousClose;
+    const changePercent = (change / previousClose) * 100;
+    
+    // Get market time and convert to readable date
+    const marketTime = new Date(meta.regularMarketTime * 1000);
+    const marketDate = marketTime.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric',
+      timeZone: meta.exchangeTimezoneName || 'America/New_York'
+    });
+    
+    // Determine asset type
+    let assetType = 'Stock';
+    if (symbol.includes('-USD')) assetType = 'Cryptocurrency';
+    else if (symbol.includes('=X')) assetType = 'Forex';
+    else if (symbol.includes('=F')) assetType = 'Commodity';
+    else if (symbol.startsWith('^')) assetType = 'Index';
+    else if (['SPY', 'QQQ', 'VTI', 'VOO', 'IEF', 'GLD', 'SLV'].includes(symbol)) assetType = 'ETF';
+    
+    return {
+      symbol: meta.symbol,
+      assetType: assetType,
+      companyName: meta.longName || meta.shortName,
+      currentPrice: currentPrice,
+      previousClose: previousClose,
+      change: change,
+      changePercent: changePercent,
+      currency: meta.currency,
+      marketDate: marketDate,
+      marketCap: summaryData?.quoteSummary?.result?.[0]?.summaryDetail?.marketCap?.raw,
+      peRatio: summaryData?.quoteSummary?.result?.[0]?.summaryDetail?.trailingPE?.raw,
+      volume: meta.regularMarketVolume,
+      dayHigh: meta.regularMarketDayHigh,
+      dayLow: meta.regularMarketDayLow,
+      fiftyTwoWeekHigh: summaryData?.quoteSummary?.result?.[0]?.summaryDetail?.fiftyTwoWeekHigh?.raw,
+      fiftyTwoWeekLow: summaryData?.quoteSummary?.result?.[0]?.summaryDetail?.fiftyTwoWeekLow?.raw
+    };
+  } catch (error) {
+    console.error('Financial data error:', error);
+    return null;
+  }
+}
+
+function detectStockSymbols(prompt) {
+  // Common stock symbol patterns
+  const symbolPatterns = [
+    /\\b([A-Z]{1,5})\\s+stock/gi,
+    /\\$([A-Z]{1,5})\\b/g,
+    /\\b(AAPL|MSFT|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|CRM|NFLX|DIS|BA|JPM|BAC|WMT|JNJ|PG|KO|PEP|V|MA|PYPL)\\b/gi
+  ];
+  
+  // Company name to symbol mapping
+  const companyMap = {
+    'apple': 'AAPL',
+    'microsoft': 'MSFT', 
+    'google': 'GOOGL',
+    'alphabet': 'GOOGL',
+    'amazon': 'AMZN',
+    'tesla': 'TSLA',
+    'meta': 'META',
+    'facebook': 'META',
+    'nvidia': 'NVDA',
+    'amd': 'AMD',
+    'intel': 'INTC',
+    'salesforce': 'CRM',
+    'netflix': 'NFLX',
+    'disney': 'DIS',
+    'boeing': 'BA',
+    'jpmorgan': 'JPM',
+    'bank of america': 'BAC',
+    'walmart': 'WMT',
+    'johnson': 'JNJ',
+    'procter': 'PG',
+    'coca cola': 'KO',
+    'pepsi': 'PEP',
+    'visa': 'V',
+    'mastercard': 'MA',
+    'paypal': 'PYPL'
+  };
+  
+  // Cryptocurrency mapping
+  const cryptoMap = {
+    'bitcoin': 'BTC-USD',
+    'btc': 'BTC-USD',
+    'ethereum': 'ETH-USD',
+    'eth': 'ETH-USD',
+    'dogecoin': 'DOGE-USD',
+    'doge': 'DOGE-USD',
+    'cardano': 'ADA-USD',
+    'ada': 'ADA-USD',
+    'solana': 'SOL-USD',
+    'sol': 'SOL-USD',
+    'polkadot': 'DOT-USD',
+    'dot': 'DOT-USD',
+    'chainlink': 'LINK-USD',
+    'link': 'LINK-USD',
+    'litecoin': 'LTC-USD',
+    'ltc': 'LTC-USD',
+    'ripple': 'XRP-USD',
+    'xrp': 'XRP-USD'
+  };
+  
+  // Forex pairs mapping
+  const forexMap = {
+    'eurusd': 'EURUSD=X',
+    'eur/usd': 'EURUSD=X',
+    'gbpusd': 'GBPUSD=X',
+    'gbp/usd': 'GBPUSD=X',
+    'usdjpy': 'USDJPY=X',
+    'usd/jpy': 'USDJPY=X',
+    'usdcad': 'USDCAD=X',
+    'usd/cad': 'USDCAD=X',
+    'audusd': 'AUDUSD=X',
+    'aud/usd': 'AUDUSD=X'
+  };
+  
+  // ETFs and Indices mapping
+  const etfIndexMap = {
+    'spy': 'SPY',
+    's&p 500': '^GSPC',
+    'sp500': '^GSPC',
+    'nasdaq': '^IXIC',
+    'dow jones': '^DJI',
+    'dow': '^DJI',
+    'qqq': 'QQQ',
+    'vti': 'VTI',
+    'voo': 'VOO',
+    'ief': 'IEF',
+    'gld': 'GLD',
+    'slv': 'SLV'
+  };
+  
+  // Commodities mapping
+  const commodityMap = {
+    'gold': 'GC=F',
+    'silver': 'SI=F',
+    'oil': 'CL=F',
+    'crude oil': 'CL=F',
+    'natural gas': 'NG=F',
+    'copper': 'HG=F',
+    'wheat': 'ZW=F',
+    'corn': 'ZC=F'
+  };
+  
+  const symbols = new Set();
+  
+  // Check for direct symbol patterns
+  symbolPatterns.forEach(pattern => {
+    const matches = prompt.match(pattern);
+    if (matches) {
+      matches.forEach(match => {
+        let symbol = match.replace(/\\$|\\s+stock/gi, '').toUpperCase();
+        if (symbol.length >= 1 && symbol.length <= 5) {
+          symbols.add(symbol);
+        }
+      });
+    }
+  });
+  
+  // Check for all mappings
+  const lowerPrompt = prompt.toLowerCase();
+  const allMaps = { ...companyMap, ...cryptoMap, ...forexMap, ...etfIndexMap, ...commodityMap };
+  
+  Object.entries(allMaps).forEach(([key, symbol]) => {
+    if (lowerPrompt.includes(key)) {
+      symbols.add(symbol);
+    }
+  });
+  
+  return Array.from(symbols);
+}
+
 async function getCloudfrontDomain() {
   if (cachedDomain) return cachedDomain;
   
@@ -410,7 +657,7 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { action, modelId, prompt, conversationId, userId, fileData, fileName, fileType } = body;
+    const { action, modelId, prompt, conversationId, userId, fileData, fileName, fileType, enableWebSearch } = body;
 
     // Input validation
     if (!action || !userId) {
@@ -487,7 +734,8 @@ exports.handler = async (event) => {
               timestamp: Date.now(),
               prompt: prompt.substring(0, 1000),
               response: \`Video generation started. Invocation: \${invocationArn}\`,
-              modelId
+              modelId,
+              modelUsed: modelId
             }
           }));
           
@@ -550,7 +798,8 @@ exports.handler = async (event) => {
             timestamp: Date.now(),
             prompt: prompt.substring(0, 1000),
             response: mediaContent,
-            modelId
+            modelId,
+            modelUsed: modelId
           }
         }));
 
@@ -565,7 +814,7 @@ exports.handler = async (event) => {
         };
       }
 
-      // Get conversation history with limit
+      // Get conversation history with limit - SHARED ACROSS ALL MODELS
       const historyResult = await ddb.send(new QueryCommand({
         TableName: process.env.TABLE_NAME,
         KeyConditionExpression: 'userId = :userId AND begins_with(conversationId, :convId)',
@@ -574,7 +823,7 @@ exports.handler = async (event) => {
           ':convId': conversationId
         },
         ScanIndexForward: true,
-        Limit: 5
+        Limit: 20
       }));
 
       let payload;
@@ -624,6 +873,71 @@ exports.handler = async (event) => {
       }
       
       if (modelId.includes('anthropic')) {
+        // Web search integration for Claude models
+        let enhancedPrompt = prompt;
+        
+        // Check for stock symbols and get financial data
+        const stockSymbols = detectStockSymbols(prompt);
+        let stockContext = '';
+        
+        if (stockSymbols.length > 0) {
+          const stockDataPromises = stockSymbols.slice(0, 3).map(symbol => getStockData(symbol)); // Limit to 3 symbols
+          const stockResults = await Promise.all(stockDataPromises);
+          
+          const validStockData = stockResults.filter(data => data !== null);
+          if (validStockData.length > 0) {
+            stockContext = validStockData.map(stock => {
+              let formattedData = \`\${stock.symbol} (\${stock.companyName || stock.assetType}) as of \${stock.marketDate}: \${stock.currency || '$'}\${stock.currentPrice} \${stock.change >= 0 ? '+' : ''}\${stock.change.toFixed(2)} (\${stock.changePercent.toFixed(2)}%)\`;
+              
+              // Add relevant metrics based on asset type
+              if (stock.assetType === 'Stock' || stock.assetType === 'ETF') {
+                formattedData += \` | Volume: \${stock.volume?.toLocaleString() || 'N/A'}\`;
+                if (stock.peRatio) formattedData += \` | P/E: \${stock.peRatio.toFixed(2)}\`;
+                if (stock.marketCap) formattedData += \` | Market Cap: $\${(stock.marketCap / 1e9).toFixed(1)}B\`;
+              } else if (stock.assetType === 'Cryptocurrency') {
+                formattedData += \` | Volume: \${stock.volume?.toLocaleString() || 'N/A'}\`;
+                if (stock.marketCap) formattedData += \` | Market Cap: $\${(stock.marketCap / 1e9).toFixed(1)}B\`;
+              } else if (stock.assetType === 'Forex') {
+                formattedData += \` | Day Range: \${stock.dayLow?.toFixed(4)} - \${stock.dayHigh?.toFixed(4)}\`;
+              } else if (stock.assetType === 'Commodity') {
+                formattedData += \` | Volume: \${stock.volume?.toLocaleString() || 'N/A'} | Day Range: \${stock.dayLow?.toFixed(2)} - \${stock.dayHigh?.toFixed(2)}\`;
+              } else if (stock.assetType === 'Index') {
+                formattedData += \` | Day Range: \${stock.dayLow?.toFixed(2)} - \${stock.dayHigh?.toFixed(2)}\`;
+              }
+              
+              return formattedData;
+            }).join('\\n');
+          }
+        }
+        
+        if (enableWebSearch) {
+          const tavilyApiKey = await getTavilyApiKey();
+          if (tavilyApiKey) {
+            const searchQuery = prompt.length > 100 ? prompt.substring(0, 100) : prompt;
+            const searchResults = await performWebSearch(searchQuery, tavilyApiKey);
+            
+            if (searchResults && searchResults.results && searchResults.results.length > 0) {
+              const searchContext = searchResults.results.map(result => 
+                \`Title: \${result.title}\\nURL: \${result.url}\\nContent: \${result.content}\`
+              ).join('\\n\\n');
+              
+              enhancedPrompt = \`Based on the following information, please answer the user's question: "\${prompt}"
+\${stockContext ? \`\\nCurrent Stock Data:\\n\${stockContext}\\n\` : ''}
+Web Search Results:
+\${searchContext}
+
+Please provide a comprehensive answer based on both the search results and your knowledge. When referencing sources, format URLs as clickable links using this format: [Link Text](URL)\`;
+            }
+          }
+        } else if (stockContext) {
+          enhancedPrompt = \`Based on the following current stock data, please answer the user's question: "\${prompt}"
+
+Current Stock Data:
+\${stockContext}
+
+Please provide a comprehensive analysis based on this financial data and your knowledge.\`;
+        }
+        
         if (messages.length === 0) {
           // No file upload, use regular text conversation
           historyResult.Items?.forEach(item => {
@@ -641,22 +955,23 @@ exports.handler = async (event) => {
           // Mermaid: flowcharts, sequence diagrams, class diagrams, state diagrams - NOT data visualizations
           const isMermaid = (lowerPrompt.includes('flowchart') || lowerPrompt.includes('sequence diagram') || lowerPrompt.includes('class diagram') || lowerPrompt.includes('state diagram') || lowerPrompt.includes('mermaid') || lowerPrompt.includes('er diagram') || lowerPrompt.includes('entity relationship')) && !isDataChart;
           
-          let enhancedPrompt = prompt;
+          let finalPrompt = enhancedPrompt;
+          
           if (isChart) {
-            enhancedPrompt += '\\n\\nGenerate a Chart.js config in triple-backtick chart code blocks. Return ONLY valid JSON - no JavaScript functions. Include type, data (labels, datasets), and simple options. No callbacks or functions.';
+            finalPrompt += '\\n\\nGenerate a Chart.js config in triple-backtick chart code blocks. Return ONLY valid JSON - no JavaScript functions. Include type, data (labels, datasets), and simple options. No callbacks or functions.';
           } else if (isDrawio) {
-            enhancedPrompt += '\\n\\nIMPORTANT: Generate a complete draw.io XML diagram with AWS styling. Use triple backticks with drawio language tag.';
+            finalPrompt += '\\n\\nIMPORTANT: Generate a complete draw.io XML diagram with AWS styling. Use triple backticks with drawio language tag.';
           } else if (isMermaid) {
-            enhancedPrompt += '\\n\\nUse simple Mermaid syntax in triple-backtick mermaid code blocks. Do NOT include ---config or theme directives. Start directly with the diagram type like flowchart TD, sequenceDiagram, or classDiagram.';
+            finalPrompt += '\\n\\nUse simple Mermaid syntax in triple-backtick mermaid code blocks. Do NOT include ---config or theme directives. Start directly with the diagram type like flowchart TD, sequenceDiagram, or classDiagram.';
           }
           
-          messages.push({ role: 'user', content: enhancedPrompt });
+          messages.push({ role: 'user', content: finalPrompt });
         }
         
         payload = { 
           anthropic_version: "bedrock-2023-05-31", 
           messages: messages, 
-          max_tokens: 4000 
+          max_tokens: 8000 
         };
       } else if (modelId.includes('nova')) {
         const messages = [];
@@ -673,6 +988,53 @@ exports.handler = async (event) => {
         const isMermaid = (lowerPrompt.includes('flowchart') || lowerPrompt.includes('sequence diagram') || lowerPrompt.includes('class diagram') || lowerPrompt.includes('state diagram') || lowerPrompt.includes('mermaid') || lowerPrompt.includes('er diagram') || lowerPrompt.includes('entity relationship')) && !isDataChart;
         
         let enhancedPrompt = prompt;
+        
+        // Check for stock symbols and get financial data
+        const stockSymbols = detectStockSymbols(prompt);
+        let stockContext = '';
+        
+        if (stockSymbols.length > 0) {
+          const stockDataPromises = stockSymbols.slice(0, 3).map(symbol => getStockData(symbol));
+          const stockResults = await Promise.all(stockDataPromises);
+          
+          const validStockData = stockResults.filter(data => data !== null);
+          if (validStockData.length > 0) {
+            stockContext = validStockData.map(stock => 
+              \`\${stock.symbol} (\${stock.companyName}): $\${stock.currentPrice} \${stock.change >= 0 ? '+' : ''}\${stock.change.toFixed(2)} (\${stock.changePercent.toFixed(2)}%) | Volume: \${stock.volume?.toLocaleString() || 'N/A'} | P/E: \${stock.peRatio?.toFixed(2) || 'N/A'} | Market Cap: $\${stock.marketCap ? (stock.marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}\`
+            ).join('\\n');
+          }
+        }
+        
+        // Web search integration for Nova models
+        let searchResults = null;
+        if (enableWebSearch) {
+          const tavilyApiKey = await getTavilyApiKey();
+          if (tavilyApiKey) {
+            const searchQuery = prompt.length > 100 ? prompt.substring(0, 100) : prompt;
+            searchResults = await performWebSearch(searchQuery, tavilyApiKey);
+            
+            if (searchResults && searchResults.results && searchResults.results.length > 0) {
+              const searchContext = searchResults.results.map(result => 
+                \`Title: \${result.title}\\nURL: \${result.url}\\nContent: \${result.content}\`
+              ).join('\\n\\n');
+              
+              enhancedPrompt = \`Based on the following information, please answer the user's question: "\${prompt}"
+\${stockContext ? \`\\nCurrent Stock Data:\\n\${stockContext}\\n\` : ''}
+Web Search Results:
+\${searchContext}
+
+Please provide a comprehensive answer based on both the search results and your knowledge. When referencing sources, format URLs as clickable links using this format: [Link Text](URL)\`;
+            }
+          }
+        } else if (stockContext) {
+          enhancedPrompt = \`Based on the following current stock data, please answer the user's question: "\${prompt}"
+
+Current Stock Data:
+\${stockContext}
+
+Please provide a comprehensive analysis based on this financial data and your knowledge.\`;
+        }
+        
         if (isChart) {
           enhancedPrompt += '\\n\\nGenerate a Chart.js config in triple-backtick chart code blocks. Return ONLY valid JSON - no JavaScript functions. Include type, data (labels, datasets), and simple options. No callbacks or functions.';
         } else if (isDrawio) {
@@ -691,7 +1053,55 @@ exports.handler = async (event) => {
         historyResult.Items?.forEach(item => {
           contextPrompt += \`Human: \${item.prompt}\\nAssistant: \${item.response}\\n\\n\`;
         });
-        contextPrompt += \`Human: \${prompt}\\nAssistant:\`;
+        
+        let finalPrompt = prompt;
+        
+        // Check for stock symbols and get financial data
+        const stockSymbols = detectStockSymbols(prompt);
+        let stockContext = '';
+        
+        if (stockSymbols.length > 0) {
+          const stockDataPromises = stockSymbols.slice(0, 3).map(symbol => getStockData(symbol));
+          const stockResults = await Promise.all(stockDataPromises);
+          
+          const validStockData = stockResults.filter(data => data !== null);
+          if (validStockData.length > 0) {
+            stockContext = validStockData.map(stock => 
+              \`\${stock.symbol} (\${stock.companyName}): $\${stock.currentPrice} \${stock.change >= 0 ? '+' : ''}\${stock.change.toFixed(2)} (\${stock.changePercent.toFixed(2)}%) | Volume: \${stock.volume?.toLocaleString() || 'N/A'} | P/E: \${stock.peRatio?.toFixed(2) || 'N/A'} | Market Cap: $\${stock.marketCap ? (stock.marketCap / 1e9).toFixed(1) + 'B' : 'N/A'}\`
+            ).join('\\n');
+          }
+        }
+        
+        // Web search integration for Llama models
+        if (enableWebSearch) {
+          const tavilyApiKey = await getTavilyApiKey();
+          if (tavilyApiKey) {
+            const searchQuery = prompt.length > 100 ? prompt.substring(0, 100) : prompt;
+            const searchResults = await performWebSearch(searchQuery, tavilyApiKey);
+            
+            if (searchResults && searchResults.results && searchResults.results.length > 0) {
+              const searchContext = searchResults.results.map(result => 
+                \`Title: \${result.title}\\nURL: \${result.url}\\nContent: \${result.content}\`
+              ).join('\\n\\n');
+              
+              finalPrompt = \`Based on the following information, please answer the user's question: "\${prompt}"
+\${stockContext ? \`\\nCurrent Stock Data:\\n\${stockContext}\\n\` : ''}
+Web Search Results:
+\${searchContext}
+
+Please provide a comprehensive answer based on both the search results and your knowledge. When referencing sources, format URLs as clickable links using this format: [Link Text](URL)\`;
+            }
+          }
+        } else if (stockContext) {
+          finalPrompt = \`Based on the following current stock data, please answer the user's question: "\${prompt}"
+
+Current Stock Data:
+\${stockContext}
+
+Please provide a comprehensive analysis based on this financial data and your knowledge.\`;
+        }
+        
+        contextPrompt += \`Human: \${finalPrompt}\\nAssistant:\`;
         
         payload = { prompt: contextPrompt, max_gen_len: 1000, temperature: 0.7 };
       } else {
@@ -701,7 +1111,7 @@ exports.handler = async (event) => {
           messages.push({ role: 'assistant', content: item.response });
         });
         messages.push({ role: 'user', content: prompt });
-        payload = { messages: messages, max_tokens: 4000 };
+        payload = { messages: messages, max_tokens: 8000 };
       }
 
       // Use InvokeModel API for all models
@@ -739,7 +1149,8 @@ exports.handler = async (event) => {
           timestamp: Date.now(),
           prompt: prompt.substring(0, 1000),
           response: content.substring(0, 5000),
-          modelId
+          modelId,
+          modelUsed: modelId // Track which model was used for this response
         }
       }));
 
@@ -808,6 +1219,7 @@ exports.handler = async (event) => {
         TABLE_NAME: conversationsTable.tableName,
         CLOUDFRONT_DOMAIN_SECRET: cloudfrontDomainSecret.secretArn,
         ALLOWED_MODELS_SECRET: allowedModelsSecret.secretArn,
+        TAVILY_API_SECRET: tavilySecret.secretArn,
         VIDEO_OUTPUT_BUCKET: videoOutputBucket.bucketName,
         APP_DOMAIN: fullDomain
       }
@@ -832,6 +1244,7 @@ exports.handler = async (event) => {
     // Grant secrets access to Bedrock Lambda
     cloudfrontDomainSecret.grantRead(bedrockLambda);
     allowedModelsSecret.grantRead(bedrockLambda);
+    tavilySecret.grantRead(bedrockLambda);
 
     // Create WAF Web ACL for API Gateway protection
     const webAcl = new wafv2.CfnWebACL(this, 'BedrockAssistantWAF', {
