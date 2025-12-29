@@ -1712,22 +1712,119 @@
         let editingMessagePair = null; // Track which message pair is being edited
 
         function editMessage(originalContent, userMessageDiv) {
-            const messageInput = document.getElementById('messageInput');
-            messageInput.value = originalContent;
-            messageInput.focus();
+            const contentDiv = userMessageDiv.querySelector('.message-content');
             
-            // Store reference to the message pair being edited
+            // Create textarea for inline editing
+            const textarea = document.createElement('textarea');
+            textarea.value = originalContent;
+            textarea.className = 'inline-edit-textarea';
+            textarea.style.cssText = `
+                width: 100%;
+                min-height: 60px;
+                padding: 12px;
+                border: 2px solid var(--aws-orange);
+                border-radius: 8px;
+                font-family: inherit;
+                font-size: inherit;
+                line-height: inherit;
+                background: var(--surface);
+                color: var(--on-surface);
+                resize: vertical;
+                outline: none;
+            `;
+            
+            // Store original content and references
+            const originalText = contentDiv.textContent;
             editingMessagePair = {
                 userMessage: userMessageDiv,
-                assistantMessage: userMessageDiv.nextElementSibling
+                assistantMessage: userMessageDiv.nextElementSibling,
+                originalContent: originalText,
+                contentDiv: contentDiv
             };
             
-            // Scroll to input area
-            messageInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Replace content with textarea
+            contentDiv.innerHTML = '';
+            contentDiv.appendChild(textarea);
             
-            // Auto-resize textarea
-            messageInput.style.height = 'auto';
-            messageInput.style.height = messageInput.scrollHeight + 'px';
+            // Auto-resize and focus
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
+            textarea.focus();
+            textarea.select();
+            
+            // Add save/cancel buttons
+            const buttonContainer = document.createElement('div');
+            buttonContainer.style.cssText = 'margin-top: 8px; display: flex; gap: 8px;';
+            
+            const saveButton = document.createElement('button');
+            saveButton.textContent = 'Send';
+            saveButton.className = 'btn';
+            saveButton.style.cssText = 'padding: 6px 12px; font-size: 12px;';
+            saveButton.onclick = () => saveInlineEdit(textarea.value);
+            
+            const cancelButton = document.createElement('button');
+            cancelButton.textContent = 'Cancel';
+            cancelButton.style.cssText = 'padding: 6px 12px; font-size: 12px; background: var(--surface-variant); color: var(--on-surface-variant); border: 1px solid var(--outline);';
+            cancelButton.onclick = cancelInlineEdit;
+            
+            buttonContainer.appendChild(saveButton);
+            buttonContainer.appendChild(cancelButton);
+            contentDiv.appendChild(buttonContainer);
+            
+            // Handle Enter key (Ctrl+Enter to save)
+            textarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    e.preventDefault();
+                    saveInlineEdit(textarea.value);
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelInlineEdit();
+                }
+            });
+        }
+        
+        function saveInlineEdit(newContent) {
+            if (!editingMessagePair || !newContent.trim()) return;
+            
+            // Remove assistant message if it exists
+            if (editingMessagePair.assistantMessage && editingMessagePair.assistantMessage.classList.contains('assistant-message')) {
+                editingMessagePair.assistantMessage.remove();
+            }
+            
+            // Restore content div and update with new content
+            editingMessagePair.contentDiv.textContent = newContent.trim();
+            
+            // Send the new message
+            sendEditedMessage(newContent.trim());
+            
+            // Clear editing state
+            editingMessagePair = null;
+        }
+        
+        function cancelInlineEdit() {
+            if (!editingMessagePair) return;
+            
+            // Restore original content
+            editingMessagePair.contentDiv.textContent = editingMessagePair.originalContent;
+            
+            // Clear editing state
+            editingMessagePair = null;
+        }
+        
+        async function sendEditedMessage(prompt) {
+            const modelId = document.getElementById('modelSelect').value;
+            const enableWebSearch = document.getElementById('webSearchToggle').checked;
+            
+            const requestBody = {
+                action: 'invoke',
+                modelId: modelId,
+                prompt: prompt,
+                conversationId: conversationId,
+                userId: userId,
+                enableWebSearch: enableWebSearch
+            };
+            
+            await sendRequest(requestBody);
         }
 
         async function sendMessage() {
@@ -1738,33 +1835,14 @@
             
             lastPrompt = prompt;
             
-            // Check if we're editing an existing message
-            if (editingMessagePair) {
-                // Update the user message content
-                const userContentDiv = editingMessagePair.userMessage.querySelector('.message-content');
-                let displayMessage = prompt;
-                if (uploadedFile) {
-                    displayMessage = `📎 ${uploadedFile.name}\n\n${prompt}`;
-                }
-                userContentDiv.textContent = displayMessage;
-                
-                // Remove the assistant message if it exists
-                if (editingMessagePair.assistantMessage && editingMessagePair.assistantMessage.classList.contains('assistant-message')) {
-                    editingMessagePair.assistantMessage.remove();
-                }
-                
-                // Clear editing state
-                editingMessagePair = null;
-            } else {
-                // Show message with file attachment if present (new message)
-                let displayMessage = prompt;
-                let attachedFileName = null;
-                if (uploadedFile) {
-                    displayMessage = `📎 ${uploadedFile.name}\n\n${prompt}`;
-                    attachedFileName = uploadedFile.name;
-                }
-                addMessage(displayMessage, true);
+            // Show message with file attachment if present (new message)
+            let displayMessage = prompt;
+            let attachedFileName = null;
+            if (uploadedFile) {
+                displayMessage = `📎 ${uploadedFile.name}\n\n${prompt}`;
+                attachedFileName = uploadedFile.name;
             }
+            addMessage(displayMessage, true);
             
             messageInput.value = '';
             

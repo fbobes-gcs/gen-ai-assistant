@@ -58,10 +58,9 @@ export class BedrockAssistantStack extends cdk.Stack {
       }
     });
 
-    // Create secret for Tavily API key
+    // Create secret for Tavily API key (value should be set manually in AWS Console)
     const tavilySecret = new secretsmanager.Secret(this, 'TavilyApiKey', {
-      description: 'Tavily Search API key for web search functionality',
-      secretStringValue: cdk.SecretValue.unsafePlainText('REDACTED_API_KEY')
+      description: 'Tavily Search API key for web search functionality'
     });
 
     // Get existing hosted zone
