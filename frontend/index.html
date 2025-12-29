@@ -153,7 +153,7 @@
 
         .btn-secondary {
             background: var(--surface);
-            color: var(--aws-squid-ink);
+            color: var(--on-surface);
             border: 1px solid var(--outline);
         }
 
@@ -1205,6 +1205,22 @@
                             mermaid.init(undefined, mermaidDiv);
                         }
                     } catch (e) { console.error('Mermaid re-render error:', e); }
+                });
+                
+                // Re-attach event handlers for interactive elements
+                document.querySelectorAll('.message.assistant-message').forEach(messageDiv => {
+                    const rewriteBtn = messageDiv.querySelector('.rewrite-btn');
+                    if (rewriteBtn && !rewriteBtn.onclick) {
+                        rewriteBtn.onclick = () => showModelSelector(messageDiv);
+                    }
+                });
+                
+                document.querySelectorAll('.message.user-message .edit-btn').forEach(editBtn => {
+                    if (!editBtn.onclick) {
+                        const messageDiv = editBtn.closest('.message');
+                        const content = messageDiv.querySelector('.message-content').textContent;
+                        editBtn.onclick = () => editMessage(content, messageDiv);
+                    }
                 });
                 
                 updateChatHistoryUI();
