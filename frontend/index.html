@@ -1404,8 +1404,40 @@
                 contentDiv.className = 'message-content';
                 contentDiv.textContent = content;
                 
+                // Add edit button for user messages
+                const editButton = document.createElement('button');
+                editButton.className = 'edit-btn';
+                editButton.innerHTML = '<span class="material-icons-round">edit</span>';
+                editButton.title = 'Edit and resend';
+                editButton.style.cssText = `
+                    position: absolute;
+                    top: 8px;
+                    right: 8px;
+                    background: var(--surface-variant);
+                    border: 1px solid var(--outline);
+                    border-radius: 6px;
+                    padding: 4px;
+                    cursor: pointer;
+                    opacity: 0;
+                    transition: opacity 0.2s;
+                    font-size: 16px;
+                    color: var(--on-surface-variant);
+                `;
+                
+                editButton.onclick = () => editMessage(content, messageDiv);
+                
+                messageDiv.style.position = 'relative';
                 messageDiv.appendChild(avatarDiv);
                 messageDiv.appendChild(contentDiv);
+                messageDiv.appendChild(editButton);
+                
+                // Show edit button on hover
+                messageDiv.addEventListener('mouseenter', () => {
+                    editButton.style.opacity = '1';
+                });
+                messageDiv.addEventListener('mouseleave', () => {
+                    editButton.style.opacity = '0';
+                });
             }
             
             chatContainer.appendChild(messageDiv);
@@ -1677,6 +1709,27 @@
             }
         });
 
+        let editingMessagePair = null; // Track which message pair is being edited
+
+        function editMessage(originalContent, userMessageDiv) {
+            const messageInput = document.getElementById('messageInput');
+            messageInput.value = originalContent;
+            messageInput.focus();
+            
+            // Store reference to the message pair being edited
+            editingMessagePair = {
+                userMessage: userMessageDiv,
+                assistantMessage: userMessageDiv.nextElementSibling
+            };
+            
+            // Scroll to input area
+            messageInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Auto-resize textarea
+            messageInput.style.height = 'auto';
+            messageInput.style.height = messageInput.scrollHeight + 'px';
+        }
+
         async function sendMessage() {
             const messageInput = document.getElementById('messageInput');
             const prompt = messageInput.value.trim();
@@ -1685,14 +1738,34 @@
             
             lastPrompt = prompt;
             
-            // Show message with file attachment if present
-            let displayMessage = prompt;
-            let attachedFileName = null;
-            if (uploadedFile) {
-                displayMessage = `📎 ${uploadedFile.name}\n\n${prompt}`;
-                attachedFileName = uploadedFile.name;
+            // Check if we're editing an existing message
+            if (editingMessagePair) {
+                // Update the user message content
+                const userContentDiv = editingMessagePair.userMessage.querySelector('.message-content');
+                let displayMessage = prompt;
+                if (uploadedFile) {
+                    displayMessage = `📎 ${uploadedFile.name}\n\n${prompt}`;
+                }
+                userContentDiv.textContent = displayMessage;
+                
+                // Remove the assistant message if it exists
+                if (editingMessagePair.assistantMessage && editingMessagePair.assistantMessage.classList.contains('assistant-message')) {
+                    editingMessagePair.assistantMessage.remove();
+                }
+                
+                // Clear editing state
+                editingMessagePair = null;
+            } else {
+                // Show message with file attachment if present (new message)
+                let displayMessage = prompt;
+                let attachedFileName = null;
+                if (uploadedFile) {
+                    displayMessage = `📎 ${uploadedFile.name}\n\n${prompt}`;
+                    attachedFileName = uploadedFile.name;
+                }
+                addMessage(displayMessage, true);
             }
-            addMessage(displayMessage, true);
+            
             messageInput.value = '';
             
             const modelId = document.getElementById('modelSelect').value;
