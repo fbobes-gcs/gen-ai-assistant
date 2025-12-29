@@ -1307,6 +1307,13 @@
                 
                 // Check for Chart.js data
                 let chartMatch = content.match(/```chart\n([\s\S]*?)\n```/);
+                // Also check for JSON code blocks that contain Chart.js config
+                if (!chartMatch) {
+                    const jsonBlockMatch = content.match(/```json\n([\s\S]*?)\n```/);
+                    if (jsonBlockMatch && jsonBlockMatch[1].includes('"type"') && jsonBlockMatch[1].includes('"data"')) {
+                        chartMatch = [null, jsonBlockMatch[1]];
+                    }
+                }
                 // Also try to detect raw JSON Chart.js config
                 if (!chartMatch) {
                     const jsonMatch = content.match(/\{[\s\S]*"type"\s*:\s*"(bar|line|pie|doughnut|scatter)"[\s\S]*"data"\s*:[\s\S]*"labels"[\s\S]*\}/);
@@ -1452,18 +1459,32 @@
         function addRewriteButton(messageDiv, associatedPrompt = null) {
             const contentDiv = messageDiv.querySelector('.message-content');
             const buttonDiv = document.createElement('div');
-            buttonDiv.style.cssText = 'display: flex; gap: 8px; margin-top: 8px;';
-            buttonDiv.innerHTML = `
+            buttonDiv.style.cssText = 'display: flex; gap: 8px; margin-top: 8px; justify-content: space-between; align-items: center;';
+            
+            // Left side: action buttons
+            const actionsDiv = document.createElement('div');
+            actionsDiv.style.cssText = 'display: flex; gap: 8px;';
+            actionsDiv.innerHTML = `
                 <button class="rewrite-btn" title="Rewrite with different model">♻️ Rewrite</button>
                 <button class="rewrite-btn" onclick="deleteMessage(this)" title="Delete this response">🗑️ Delete</button>
             `;
+            
+            // Right side: model indicator
+            const modelDiv = document.createElement('div');
+            const currentModel = document.getElementById('modelSelect').value;
+            const modelName = document.getElementById('modelSelect').selectedOptions[0].text;
+            modelDiv.style.cssText = 'font-size: 11px; color: var(--outline); opacity: 0.7;';
+            modelDiv.textContent = modelName;
+            
+            buttonDiv.appendChild(actionsDiv);
+            buttonDiv.appendChild(modelDiv);
             
             // Store the prompt with this message
             const promptToUse = associatedPrompt || lastPrompt;
             messageDiv.dataset.associatedPrompt = promptToUse;
             
             // Add click handler for rewrite button that targets this specific message
-            const rewriteBtn = buttonDiv.querySelector('.rewrite-btn');
+            const rewriteBtn = actionsDiv.querySelector('.rewrite-btn');
             rewriteBtn.onclick = () => showModelSelector(messageDiv);
             
             contentDiv.appendChild(buttonDiv);
@@ -2126,7 +2147,47 @@
                 const data = await response.json();
                 
                 if (data.response) {
-                    // Format the response with proper line breaks and links
+                    // Check for Chart.js data in rewritten response
+                    let chartMatch = data.response.match(/```chart\n([\s\S]*?)\n```/);
+                    if (!chartMatch) {
+                        const jsonBlockMatch = data.response.match(/```json\n([\s\S]*?)\n```/);
+                        if (jsonBlockMatch && jsonBlockMatch[1].includes('"type"') && jsonBlockMatch[1].includes('"data"')) {
+                            chartMatch = [null, jsonBlockMatch[1]];
+                        }
+                    }
+                    if (!chartMatch) {
+                        const jsonMatch = data.response.match(/\{[\s\S]*"type"\s*:\s*"(bar|line|pie|doughnut|scatter)"[\s\S]*"data"\s*:[\s\S]*"labels"[\s\S]*\}/);
+                        if (jsonMatch) {
+                            chartMatch = [null, jsonMatch[0]];
+                        }
+                    }
+                    
+                    if (chartMatch) {
+                        try {
+                            let cleanJson = chartMatch[1]
+                                .replace(/:\s*function\s*\([^)]*\)\s*\{[^}]*\}/g, ': null')
+                                .replace(/"callbacks"\s*:\s*\{[^}]*\}/g, '"callbacks": {}');
+                            const chartData = JSON.parse(cleanJson);
+                            const canvasId = 'chart-' + Date.now();
+                            const chartJson = JSON.stringify(chartData).replace(/'/g, '&#39;');
+                            contentDiv.innerHTML = `<div class="chart-container" data-chart='${chartJson}' style="background: white; padding: 16px; border-radius: 12px; margin: 8px 0;"><canvas id="${canvasId}" width="400" height="300"></canvas></div>`;
+                            
+                            const ctx = document.getElementById(canvasId).getContext('2d');
+                            new Chart(ctx, chartData);
+                            addRewriteButton(targetMessageDiv, associatedPrompt);
+                            
+                            // Update the model indicator
+                            const modelDiv = targetMessageDiv.querySelector('.message-content > div:last-child > div:last-child');
+                            if (modelDiv) {
+                                modelDiv.textContent = selectedOption.text;
+                            }
+                            return;
+                        } catch (e) {
+                            console.error('Chart parsing error in rewrite:', e);
+                        }
+                    }
+                    
+                    // Regular text formatting if not a chart
                     const formattedContent = data.response
                         .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color: var(--aws-orange); text-decoration: underline;">$1</a>')
                         .replace(/\n\n/g, '</p><p>')
@@ -2136,6 +2197,12 @@
                     
                     contentDiv.innerHTML = formattedContent;
                     addRewriteButton(targetMessageDiv, associatedPrompt);
+                    
+                    // Update the model indicator to show the new model
+                    const modelDiv = targetMessageDiv.querySelector('.message-content > div:last-child > div:last-child');
+                    if (modelDiv) {
+                        modelDiv.textContent = selectedOption.text;
+                    }
                 } else {
                     contentDiv.innerHTML = '<p>Error: ' + (data.error || 'Unknown error') + '</p>';
                 }

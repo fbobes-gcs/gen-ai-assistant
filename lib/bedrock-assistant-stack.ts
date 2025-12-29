@@ -618,7 +618,9 @@ function detectStockSymbols(prompt) {
   const allMaps = { ...companyMap, ...cryptoMap, ...forexMap, ...etfIndexMap, ...commodityMap };
   
   Object.entries(allMaps).forEach(([key, symbol]) => {
-    if (lowerPrompt.includes(key)) {
+    // Use word boundaries to avoid partial matches like "ada" in "Canada"
+    const words = lowerPrompt.split(/\\W+/);
+    if (words.includes(key.toLowerCase())) {
       symbols.add(symbol);
     }
   });
