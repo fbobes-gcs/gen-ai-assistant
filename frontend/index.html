@@ -422,6 +422,36 @@
             font-size: 20px;
         }
 
+        .voice-btn {
+            background: var(--surface-variant);
+            color: var(--on-surface);
+            border: 1px solid var(--outline);
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-right: 8px;
+        }
+
+        .voice-btn:hover {
+            background: var(--surface-container);
+        }
+
+        .voice-btn.recording {
+            background: #ef4444;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
         .attach-btn {
             width: 40px;
             height: 40px;
@@ -805,18 +835,18 @@
                         <select id="modelSelect">
                             <optgroup label="Text Models">
                                 <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">Claude Sonnet 4.5</option>
-                                <option value="us.anthropic.claude-3-5-haiku-20241022-v1:0">Claude Haiku 3.5</option>
+                                <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">Claude Haiku 4.5</option>
                                 <option value="us.amazon.nova-premier-v1:0">Nova Premier</option>
                                 <option value="us.amazon.nova-pro-v1:0">Nova Pro</option>
                                 <option value="us.meta.llama4-scout-17b-instruct-v1:0">Llama 4 Scout</option>
                                 <option value="us.meta.llama4-maverick-17b-instruct-v1:0">Llama 4 Maverick</option>
-                                <option value="us.anthropic.claude-3-5-sonnet-20241022-v2:0">Claude 3.5 Sonnet v2</option>
+                                <option value="mistral.mistral-large-3-675b-instruct">Mistral Large 3</option>
                             </optgroup>
                             <optgroup label="Image Generation">
                                 <option value="amazon.nova-canvas-v1:0">Nova Canvas</option>
                             </optgroup>
                             <optgroup label="Video Generation">
-                                <option value="amazon.nova-reel-v1:0">Nova Reel</option>
+                                <option value="amazon.nova-reel-v1:1">Nova Reel</option>
                             </optgroup>
                         </select>
                         
@@ -861,6 +891,9 @@
                                 onkeydown="handleKeyPress(event)"
                             ></textarea>
                         </div>
+                        <button class="btn voice-btn" onclick="toggleVoiceInput()" id="voiceButton" title="Voice input">
+                            <span class="material-icons-round" id="voiceIcon">mic</span>
+                        </button>
                         <button class="btn send-btn" onclick="sendMessage()" id="sendButton">
                             <span class="material-icons-round" id="sendIcon">send</span>
                         </button>
@@ -1515,6 +1548,69 @@
             }
         }
 
+        let recognition = null;
+        let isRecording = false;
+
+        function toggleVoiceInput() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                alert('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari on desktop.');
+                return;
+            }
+
+            if (isRecording) {
+                stopVoiceInput();
+            } else {
+                startVoiceInput();
+            }
+        }
+
+        function startVoiceInput() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            const voiceBtn = document.getElementById('voiceButton');
+            const voiceIcon = document.getElementById('voiceIcon');
+            
+            voiceBtn.classList.add('recording');
+            voiceIcon.textContent = 'stop';
+            isRecording = true;
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                const messageInput = document.getElementById('messageInput');
+                messageInput.value = transcript;
+                messageInput.focus();
+            };
+
+            recognition.onerror = function(event) {
+                console.error('Speech recognition error:', event.error);
+                stopVoiceInput();
+            };
+
+            recognition.onend = function() {
+                stopVoiceInput();
+            };
+
+            recognition.start();
+        }
+
+        function stopVoiceInput() {
+            if (recognition) {
+                recognition.stop();
+            }
+            
+            const voiceBtn = document.getElementById('voiceButton');
+            const voiceIcon = document.getElementById('voiceIcon');
+            
+            voiceBtn.classList.remove('recording');
+            voiceIcon.textContent = 'mic';
+            isRecording = false;
+        }
+
         // Copy all other functions from the original file
         async function checkAuthState() {
             if (!userPool) {
@@ -1717,6 +1813,17 @@
 
         // Update send button icon based on web search toggle
         document.addEventListener('DOMContentLoaded', function() {
+            // Hide voice button on iOS devices and Firefox
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
+            
+            if (isIOS || isFirefox) {
+                const voiceBtn = document.getElementById('voiceButton');
+                if (voiceBtn) {
+                    voiceBtn.style.display = 'none';
+                }
+            }
+            
             // Initialize chat history UI
             updateChatHistoryUI();
             

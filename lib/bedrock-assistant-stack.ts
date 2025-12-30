@@ -358,7 +358,7 @@ let lastCacheTime = 0;
 
 async function getAllowedModels() {
   const now = Date.now();
-  if (cachedModels && (now - lastCacheTime) < 300000) return cachedModels; // 5 min cache
+  if (cachedModels && (now - lastCacheTime) < 300000) return cachedModels; // 5 min cache - refreshed
   
   try {
     const response = await secretsClient.send(new GetSecretValueCommand({
@@ -373,15 +373,21 @@ async function getAllowedModels() {
     // Fallback models
     return [
       'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+      'mistral.mistral-large-3-675b-instruct',
       'us.anthropic.claude-haiku-4-5-20251001-v1:0',
       'us.amazon.nova-premier-v1:0',
       'us.amazon.nova-2-lite-v1:0',
       'us.amazon.nova-pro-v1:0',
       'us.meta.llama4-scout-17b-instruct-v1:0',
       'us.meta.llama4-maverick-17b-instruct-v1:0',
-      'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
       'amazon.nova-canvas-v1:0',
-      'amazon.nova-reel-v1:0'
+      'amazon.nova-reel-v1:1',
+      'stability.ai',
+      'stability.stable-image-core-v1:0',
+      'stability.stable-image-ultra-v1:0',
+      'stability.stable-image-inpaint-v1:0',
+      'stability.stable-image-upscale-v1:0',
+      'stability.stable-image-edit-v1:0'
     ];
   }
 }
@@ -678,8 +684,12 @@ exports.handler = async (event) => {
         };
       }
 
+      // No special model selection needed
+      let actualModelId = modelId;
+
       const allowedModels = await getAllowedModels();
-      if (!allowedModels.includes(modelId)) {
+      console.log('Model validation - checking:', actualModelId); // Force cache refresh
+      if (!allowedModels.includes(actualModelId)) {
         return {
           statusCode: 400,
           headers,
@@ -696,15 +706,15 @@ exports.handler = async (event) => {
       }
 
       // Handle image and video generation models
-      if (modelId.includes('nova-canvas') || modelId.includes('nova-reel') || modelId.includes('stability')) {
+      if (actualModelId.includes('nova-canvas') || actualModelId.includes('nova-reel')) {
         
         // Nova Reel requires async invocation
-        if (modelId.includes('nova-reel')) {
+        if (actualModelId.includes('nova-reel')) {
           const outputPrefix = \`videos/\${userId}/\${Date.now()}\`;
           const outputS3Uri = \`s3://\${process.env.VIDEO_OUTPUT_BUCKET}/\${outputPrefix}/\`;
           
           const asyncCommand = new StartAsyncInvokeCommand({
-            modelId,
+            modelId: actualModelId,
             modelInput: {
               taskType: 'TEXT_VIDEO',
               textToVideoParams: {
@@ -735,8 +745,8 @@ exports.handler = async (event) => {
               timestamp: Date.now(),
               prompt: prompt.substring(0, 1000),
               response: \`Video generation started. Invocation: \${invocationArn}\`,
-              modelId,
-              modelUsed: modelId
+              modelId: actualModelId,
+              modelUsed: actualModelId
             }
           }));
           
@@ -755,31 +765,42 @@ exports.handler = async (event) => {
         
         let mediaPayload;
         
-        if (modelId.includes('nova-canvas')) {
-          mediaPayload = {
-            taskType: 'TEXT_IMAGE',
-            textToImageParams: {
-              text: prompt
-            },
-            imageGenerationConfig: {
-              numberOfImages: 1,
-              height: 1024,
-              width: 1024,
-              cfgScale: 8.0
-            }
-          };
-        } else {
-          // Stability AI models
-          mediaPayload = {
-            prompt: prompt,
-            mode: 'text-to-image',
-            aspect_ratio: '1:1',
-            output_format: 'png'
-          };
+        if (actualModelId.includes('nova-canvas')) {
+          if (fileData) {
+            // Image editing/variation with uploaded image
+            mediaPayload = {
+              taskType: 'IMAGE_VARIATION',
+              imageVariationParams: {
+                text: prompt,
+                images: [fileData],
+                similarityStrength: 0.7
+              },
+              imageGenerationConfig: {
+                numberOfImages: 1,
+                height: 1024,
+                width: 1024,
+                cfgScale: 8.0
+              }
+            };
+          } else {
+            // Text to image generation
+            mediaPayload = {
+              taskType: 'TEXT_IMAGE',
+              textToImageParams: {
+                text: prompt
+              },
+              imageGenerationConfig: {
+                numberOfImages: 1,
+                height: 1024,
+                width: 1024,
+                cfgScale: 8.0
+              }
+            };
+          }
         }
 
         const mediaCommand = new InvokeModelCommand({
-          modelId,
+          modelId: actualModelId,
           body: JSON.stringify(mediaPayload),
           contentType: 'application/json'
         });
@@ -799,8 +820,8 @@ exports.handler = async (event) => {
             timestamp: Date.now(),
             prompt: prompt.substring(0, 1000),
             response: mediaContent,
-            modelId,
-            modelUsed: modelId
+            modelId: actualModelId,
+            modelUsed: actualModelId
           }
         }));
 
@@ -836,7 +857,7 @@ exports.handler = async (event) => {
         const supportedImageTypes = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
         
         if (supportedImageTypes.includes(fileExtension)) {
-          if (modelId.includes('anthropic')) {
+          if (actualModelId.includes('anthropic')) {
             messages = [{
               role: 'user',
               content: [
@@ -854,7 +875,7 @@ exports.handler = async (event) => {
                 }
               ]
             }];
-          } else if (modelId.includes('nova')) {
+          } else if (actualModelId.includes('nova')) {
             messages = [{
               role: 'user',
               content: [
@@ -1105,6 +1126,15 @@ Please provide a comprehensive analysis based on this financial data and your kn
         contextPrompt += \`Human: \${finalPrompt}\\nAssistant:\`;
         
         payload = { prompt: contextPrompt, max_gen_len: 1000, temperature: 0.7 };
+      } else if (modelId.includes('mistral')) {
+        // Mistral models
+        const messages = [];
+        historyResult.Items?.forEach(item => {
+          messages.push({ role: 'user', content: item.prompt });
+          messages.push({ role: 'assistant', content: item.response });
+        });
+        messages.push({ role: 'user', content: prompt });
+        payload = { messages: messages, max_tokens: 8000, temperature: 0.7 };
       } else {
         const messages = [];
         historyResult.Items?.forEach(item => {
@@ -1132,8 +1162,10 @@ Please provide a comprehensive analysis based on this financial data and your kn
         content = result.output.message.content[0].text;
       } else if (modelId.includes('llama')) {
         content = result.generation;
+      } else if (modelId.includes('mistral')) {
+        content = result.choices[0].message.content;
       } else {
-        content = result.content?.[0]?.text || result.output?.message?.content?.[0]?.text || 'No response';
+        content = result.content?.[0]?.text || result.output?.message?.content?.[0]?.text || result.outputs?.[0]?.text || result.choices?.[0]?.message?.content || 'No response';
       }
 
       // Ensure content is a string
