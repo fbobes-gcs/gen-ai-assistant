@@ -340,6 +340,7 @@ exports.handler = async (event) => {
       memorySize: 512,
       code: lambda.Code.fromInline(`
 const { BedrockRuntimeClient, InvokeModelCommand, ConverseCommand, StartAsyncInvokeCommand, GetAsyncInvokeCommand } = require('@aws-sdk/client-bedrock-runtime');
+const { BedrockAgentRuntimeClient, RetrieveAndGenerateCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
@@ -347,6 +348,7 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const bedrock = new BedrockRuntimeClient({});
+const bedrockAgent = new BedrockAgentRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const secretsClient = new SecretsManagerClient({});
 const s3Client = new S3Client({});
@@ -664,7 +666,9 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { action, modelId, prompt, conversationId, userId, fileData, fileName, fileType, enableWebSearch } = body;
+    const { action, modelId, prompt, conversationId, userId, fileData, fileName, fileType, enableWebSearch, enableStrataKb } = body;
+
+    console.log('Request parameters:', { action, enableStrataKb, prompt: prompt?.substring(0, 50) });
 
     // Input validation
     if (!action || !userId) {
@@ -673,6 +677,73 @@ exports.handler = async (event) => {
         headers,
         body: JSON.stringify({ error: 'Missing required parameters' })
       };
+    }
+
+    // Handle Strata Knowledge Base query (works with any model)
+    if (enableStrataKb === true && action === 'invoke') {
+      console.log('Strata KB enabled, querying KB ID:', process.env.STRATA_KB_ID);
+      try {
+        const kbCommand = new RetrieveAndGenerateCommand({
+          input: {
+            text: prompt
+          },
+          retrieveAndGenerateConfiguration: {
+            type: 'KNOWLEDGE_BASE',
+            knowledgeBaseConfiguration: {
+              knowledgeBaseId: process.env.STRATA_KB_ID,
+              modelArn: 'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0',
+              retrievalConfiguration: {
+                vectorSearchConfiguration: {
+                  numberOfResults: 10
+                }
+              },
+              generationConfiguration: {
+                promptTemplate: {
+                  textPromptTemplate: "You are a helpful assistant for strata corporation management. Based on the following context from strata documents, provide a comprehensive and detailed response to the user's question. Include specific details, dates, amounts, and decisions mentioned in the documents. If multiple documents are relevant, synthesize the information to provide a complete answer.\\\\n\\\\nContext: $search_results$\\\\n\\\\nQuestion: $query$\\\\n\\\\nProvide a detailed response:"
+                }
+              }
+            }
+          }
+        });
+        
+        console.log('Sending KB command...');
+        const kbResponse = await bedrockAgent.send(kbCommand);
+        console.log('KB response received:', JSON.stringify(kbResponse, null, 2));
+        
+        if (kbResponse.output && kbResponse.output.text) {
+          // Store the KB response in DynamoDB
+          await ddb.send(new PutCommand({
+            TableName: process.env.TABLE_NAME,
+            Item: {
+              userId,
+              conversationId: \`\${conversationId}#\${Date.now()}\`,
+              timestamp: Date.now(),
+              prompt: prompt.substring(0, 1000),
+              response: kbResponse.output.text,
+              modelId: 'strata-kb',
+              modelUsed: 'strata-kb'
+            }
+          }));
+
+          return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ 
+              response: kbResponse.output.text
+            })
+          };
+        }
+      } catch (kbError) {
+        console.error('Knowledge Base query failed:', kbError);
+        return {
+          statusCode: 500,
+          headers,
+          body: JSON.stringify({ 
+            error: 'Knowledge Base query failed',
+            details: kbError.message
+          })
+        };
+      }
     }
 
     if (action === 'invoke') {
@@ -1255,7 +1326,8 @@ Please provide a comprehensive analysis based on this financial data and your kn
         ALLOWED_MODELS_SECRET: allowedModelsSecret.secretArn,
         TAVILY_API_SECRET: tavilySecret.secretArn,
         VIDEO_OUTPUT_BUCKET: videoOutputBucket.bucketName,
-        APP_DOMAIN: fullDomain
+        APP_DOMAIN: fullDomain,
+        STRATA_KB_ID: '3BLV5XKS9Y'
       }
     });
 
@@ -1265,6 +1337,13 @@ Please provide a comprehensive analysis based on this financial data and your kn
     bedrockLambda.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:StartAsyncInvoke', 'bedrock:GetAsyncInvoke'],
+      resources: ['*']
+    }));
+
+    // Grant Knowledge Base permissions
+    bedrockLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['bedrock:RetrieveAndGenerate', 'bedrock:Retrieve'],
       resources: ['*']
     }));
 

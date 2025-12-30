@@ -858,6 +858,15 @@
                                 <span class="toggle-slider"></span>
                             </label>
                         </div>
+                        
+                        <div id="strataKbContainer" style="margin-left: 20px; display: flex; align-items: center; gap: 8px;">
+                            <span class="material-icons-round" style="font-size: 18px;">folder</span>
+                            <label for="strataKbToggle" id="strataKbLabel" style="font-weight: 500;">Strata KB:</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="strataKbToggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
                     </div>
 
                     <div class="chat-messages glass" id="chatContainer">
@@ -1981,6 +1990,7 @@
         async function sendEditedMessage(prompt) {
             const modelId = document.getElementById('modelSelect').value;
             const enableWebSearch = document.getElementById('webSearchToggle').checked;
+            const enableStrataKb = document.getElementById('strataKbToggle').checked;
             
             const requestBody = {
                 action: 'invoke',
@@ -1988,7 +1998,8 @@
                 prompt: prompt,
                 conversationId: conversationId,
                 userId: userId,
-                enableWebSearch: enableWebSearch
+                enableWebSearch: enableWebSearch,
+                enableStrataKb: enableStrataKb
             };
             
             // Store the user message to insert response after it
@@ -2018,6 +2029,7 @@
             
             const modelId = document.getElementById('modelSelect').value;
             const enableWebSearch = document.getElementById('webSearchToggle').checked;
+            const enableStrataKb = document.getElementById('strataKbToggle').checked;
             
             // Prepare request body
             const requestBody = {
@@ -2026,7 +2038,8 @@
                 prompt: prompt,
                 conversationId: conversationId,
                 userId: userId,
-                enableWebSearch: enableWebSearch
+                enableWebSearch: enableWebSearch,
+                enableStrataKb: enableStrataKb
             };
             
             // Handle file upload if present
@@ -2251,6 +2264,7 @@
             
             try {
                 const enableWebSearch = document.getElementById('webSearchToggle').checked;
+                const enableStrataKb = document.getElementById('strataKbToggle').checked;
                 const response = await fetch(`${API_URL}/bedrock`, {
                     method: 'POST',
                     headers: { 
@@ -2263,7 +2277,8 @@
                         prompt: associatedPrompt,
                         conversationId: conversationId + '-rewrite',
                         userId: userId,
-                        enableWebSearch: enableWebSearch
+                        enableWebSearch: enableWebSearch,
+                        enableStrataKb: enableStrataKb
                     })
                 });
                 
