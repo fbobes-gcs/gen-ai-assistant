@@ -683,9 +683,12 @@ exports.handler = async (event) => {
     if (enableStrataKb === true && action === 'invoke') {
       console.log('Strata KB enabled, querying KB ID:', process.env.STRATA_KB_ID);
       try {
+        // Add context to the query instead of using custom prompt template
+        const enhancedQuery = 'Context: You are assisting with strata corporation management questions. Provide comprehensive responses with specific details, dates, and amounts when available.\\n\\nQuestion: ' + prompt;
+        
         const kbCommand = new RetrieveAndGenerateCommand({
           input: {
-            text: prompt
+            text: enhancedQuery
           },
           retrieveAndGenerateConfiguration: {
             type: 'KNOWLEDGE_BASE',
@@ -694,12 +697,7 @@ exports.handler = async (event) => {
               modelArn: 'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0',
               retrievalConfiguration: {
                 vectorSearchConfiguration: {
-                  numberOfResults: 10
-                }
-              },
-              generationConfiguration: {
-                promptTemplate: {
-                  textPromptTemplate: "You are a helpful assistant for strata corporation management. Based on the following context from strata documents, provide a comprehensive and detailed response to the user's question. Include specific details, dates, amounts, and decisions mentioned in the documents. If multiple documents are relevant, synthesize the information to provide a complete answer.\\\\n\\\\nContext: $search_results$\\\\n\\\\nQuestion: $query$\\\\n\\\\nProvide a detailed response:"
+                  numberOfResults: 50  // Increased to get maximum context
                 }
               }
             }
@@ -708,9 +706,62 @@ exports.handler = async (event) => {
         
         console.log('Sending KB command...');
         const kbResponse = await bedrockAgent.send(kbCommand);
-        console.log('KB response received:', JSON.stringify(kbResponse, null, 2));
+        console.log('KB response received');
         
         if (kbResponse.output && kbResponse.output.text) {
+          console.log('Processing KB response with citations...');
+          
+          // Extract sources - show unique sources without trying to match citation numbers
+          let sourcesText = '';
+          const uniqueSources = new Set();
+          
+          let answer = kbResponse.output.text;
+          const citations = kbResponse.citations || [];
+          
+          // Try multiple regex patterns to catch different citation formats
+          answer = answer.replace(/\\(Source:\\s*\\d+(?:,\\s*\\d+)*\\)/gi, '');
+          answer = answer.replace(/\\[Source:\\s*\\d+(?:,\\s*\\d+)*\\]/gi, '');
+          answer = answer.replace(/Source:\\s*\\d+(?:,\\s*\\d+)*/gi, '');
+          
+          // Clean up any double spaces or line breaks left behind
+          answer = answer.replace(/\\s{2,}/g, ' ');
+          answer = answer.replace(/\\n{3,}/g, '\\n\\n');
+          
+          console.log(\`Found \${citations.length} citations\`);
+          
+          if (citations.length > 0) {
+            citations.forEach((citation) => {
+              const refs = citation.retrievedReferences || [];
+              
+              refs.forEach((ref) => {
+                const s3Uri = ref.location?.s3Location?.uri;
+                
+                if (s3Uri) {
+                  const fileName = s3Uri.split('/').pop();
+                  const pageNum = ref.metadata?.['x-amz-bedrock-kb-document-page-number'];
+                  
+                  let sourceInfo = fileName;
+                  if (pageNum && pageNum > 1) {
+                    sourceInfo += \` (Page \${Math.floor(pageNum)})\`;
+                  }
+                  
+                  uniqueSources.add(sourceInfo);
+                }
+              });
+            });
+            
+            if (uniqueSources.size > 0) {
+              sourcesText = '\\n\\n**Sources:**\\n';
+              Array.from(uniqueSources).forEach(source => {
+                sourcesText += \`• \${source}\\n\`;
+              });
+            } else {
+              sourcesText = '\\n\\n**Sources:**\\n• No source URIs found in citations';
+            }
+          } else {
+            sourcesText = '\\n\\n**Sources:**\\n• No citations returned by Knowledge Base';
+          }
+
           // Store the KB response in DynamoDB
           await ddb.send(new PutCommand({
             TableName: process.env.TABLE_NAME,
@@ -719,7 +770,7 @@ exports.handler = async (event) => {
               conversationId: \`\${conversationId}#\${Date.now()}\`,
               timestamp: Date.now(),
               prompt: prompt.substring(0, 1000),
-              response: kbResponse.output.text,
+              response: kbResponse.output.text + sourcesText,
               modelId: 'strata-kb',
               modelUsed: 'strata-kb'
             }
@@ -729,7 +780,7 @@ exports.handler = async (event) => {
             statusCode: 200,
             headers,
             body: JSON.stringify({ 
-              response: kbResponse.output.text
+              response: kbResponse.output.text + sourcesText
             })
           };
         }
@@ -778,6 +829,29 @@ exports.handler = async (event) => {
 
       // Handle image and video generation models
       if (actualModelId.includes('nova-canvas') || actualModelId.includes('nova-reel')) {
+        
+        // Get conversation history for Canvas context
+        const historyResult = await ddb.send(new QueryCommand({
+          TableName: process.env.TABLE_NAME,
+          KeyConditionExpression: 'userId = :userId AND begins_with(conversationId, :convId)',
+          ExpressionAttributeValues: { 
+            ':userId': userId,
+            ':convId': conversationId
+          },
+          ScanIndexForward: true,
+          Limit: 20
+        }));
+        
+        // Add context from last Canvas generation if available
+        let enhancedPrompt = prompt;
+        if (actualModelId.includes('nova-canvas') && historyResult.Items && historyResult.Items.length > 0) {
+          const lastCanvasItem = historyResult.Items.find(item => 
+            item.modelUsed && item.modelUsed.includes('nova-canvas')
+          );
+          if (lastCanvasItem && lastCanvasItem.prompt) {
+            enhancedPrompt = lastCanvasItem.prompt + ', ' + prompt;
+          }
+        }
         
         // Nova Reel requires async invocation
         if (actualModelId.includes('nova-reel')) {
@@ -858,7 +932,7 @@ exports.handler = async (event) => {
             mediaPayload = {
               taskType: 'TEXT_IMAGE',
               textToImageParams: {
-                text: prompt
+                text: enhancedPrompt
               },
               imageGenerationConfig: {
                 numberOfImages: 1,
@@ -1034,6 +1108,10 @@ Please provide a comprehensive analysis based on this financial data and your kn
         if (messages.length === 0) {
           // No file upload, use regular text conversation
           historyResult.Items?.forEach(item => {
+            // Skip KB responses if Strata KB is disabled
+            if (enableStrataKb !== true && item.modelUsed === 'strata-kb') {
+              return;
+            }
             messages.push({ role: 'user', content: item.prompt });
             messages.push({ role: 'assistant', content: item.response });
           });
@@ -1069,6 +1147,10 @@ Please provide a comprehensive analysis based on this financial data and your kn
       } else if (modelId.includes('nova')) {
         const messages = [];
         historyResult.Items?.forEach(item => {
+          // Skip KB responses if Strata KB is disabled
+          if (enableStrataKb !== true && item.modelUsed === 'strata-kb') {
+            return;
+          }
           messages.push({ role: 'user', content: [{ text: item.prompt }] });
           messages.push({ role: 'assistant', content: [{ text: item.response }] });
         });
@@ -1144,6 +1226,10 @@ Please provide a comprehensive analysis based on this financial data and your kn
       } else if (modelId.includes('llama')) {
         let contextPrompt = '';
         historyResult.Items?.forEach(item => {
+          // Skip KB responses if Strata KB is disabled
+          if (enableStrataKb !== true && item.modelUsed === 'strata-kb') {
+            return;
+          }
           contextPrompt += \`Human: \${item.prompt}\\nAssistant: \${item.response}\\n\\n\`;
         });
         
