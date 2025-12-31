@@ -768,19 +768,6 @@
         let userId = null;
         let conversationId = null;
 
-        function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (file) {
-                selectedFile = file;
-                document.getElementById('fileName').textContent = file.name;
-                document.getElementById('filePreview').style.display = 'flex';
-                
-                // Update placeholder to show file is selected
-                const messageInput = document.getElementById('messageInput');
-                messageInput.placeholder = `File selected: ${file.name} - Enter your message about this file...`;
-            }
-        }
-
         function isImageGenerationModel(modelId) {
             return modelId.includes('nova-canvas');
         }
@@ -1013,10 +1000,10 @@
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (file) {
-                // Check file size (2MB limit to account for base64 encoding overhead)
-                const maxSize = 2 * 1024 * 1024; // 2MB
+                // Check file size (5MB limit to account for base64 encoding overhead)
+                const maxSize = 5 * 1024 * 1024; // 5MB
                 if (file.size > maxSize) {
-                    alert('File too large. Please select a file smaller than 2MB.');
+                    alert('File too large. Please select a file smaller than 5MB.');
                     event.target.value = '';
                     return;
                 }
