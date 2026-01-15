@@ -1557,7 +1557,9 @@ Please provide a comprehensive analysis based on this financial data and your kn
       }
     });
 
-    const bedrockIntegration = new apigateway.LambdaIntegration(bedrockLambda);
+    const bedrockIntegration = new apigateway.LambdaIntegration(bedrockLambda, {
+      timeout: cdk.Duration.seconds(29)
+    });
     const bedrockResource = api.root.addResource('bedrock');
     bedrockResource.addMethod('POST', bedrockIntegration, {
       methodResponses: [{ statusCode: '200' }, { statusCode: '400' }, { statusCode: '500' }]
