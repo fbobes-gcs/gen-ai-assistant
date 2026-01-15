@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
@@ -336,7 +337,7 @@ exports.handler = async (event) => {
     const bedrockLambda = new lambda.Function(this, 'BedrockFunction', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      timeout: cdk.Duration.seconds(120),
+      timeout: cdk.Duration.seconds(180),
       memorySize: 512,
       code: lambda.Code.fromInline(`
 const { BedrockRuntimeClient, InvokeModelCommand, ConverseCommand, StartAsyncInvokeCommand, GetAsyncInvokeCommand } = require('@aws-sdk/client-bedrock-runtime');
@@ -1537,6 +1538,25 @@ Please provide a comprehensive analysis based on this financial data and your kn
       }
     });
 
+    // Add Gateway Responses for CORS on errors (including 504 timeout)
+    api.addGatewayResponse('Default4xx', {
+      type: apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': `'${cloudfrontDomainSecret.secretValue.unsafeUnwrap()}'`,
+        'Access-Control-Allow-Headers': "'Content-Type,Authorization'",
+        'Access-Control-Allow-Methods': "'GET,POST,OPTIONS'"
+      }
+    });
+
+    api.addGatewayResponse('Default5xx', {
+      type: apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': `'${cloudfrontDomainSecret.secretValue.unsafeUnwrap()}'`,
+        'Access-Control-Allow-Headers': "'Content-Type,Authorization'",
+        'Access-Control-Allow-Methods': "'GET,POST,OPTIONS'"
+      }
+    });
+
     const bedrockIntegration = new apigateway.LambdaIntegration(bedrockLambda);
     const bedrockResource = api.root.addResource('bedrock');
     bedrockResource.addMethod('POST', bedrockIntegration, {
@@ -1678,6 +1698,14 @@ Please provide a comprehensive analysis based on this financial data and your kn
       zone: hostedZone,
       recordName: 'genai',
       target: route53.RecordTarget.fromAlias(new route53targets.CloudFrontTarget(distribution))
+    });
+
+    // Deploy frontend to S3
+    new s3deploy.BucketDeployment(this, 'DeployWebsite', {
+      sources: [s3deploy.Source.asset('./frontend')],
+      destinationBucket: websiteBucket,
+      distribution,
+      distributionPaths: ['/*']
     });
 
     // Outputs

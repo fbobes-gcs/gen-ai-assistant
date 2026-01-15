@@ -482,6 +482,20 @@
             }
         }
 
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid var(--outline);
+            border-top-color: var(--aws-orange);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
         .rewrite-btn {
             margin-top: 8px;
             padding: 4px 8px;
@@ -1456,39 +1470,62 @@
                 contentDiv.className = 'message-content';
                 contentDiv.textContent = content;
                 
-                // Add edit button for user messages
+                // Add edit and delete buttons for user messages
+                const buttonContainer = document.createElement('div');
+                buttonContainer.style.cssText = `
+                    position: absolute;
+                    top: 8px;
+                    right: 8px;
+                    display: flex;
+                    gap: 4px;
+                    opacity: 0;
+                    transition: opacity 0.2s;
+                `;
+                
                 const editButton = document.createElement('button');
                 editButton.className = 'edit-btn';
                 editButton.innerHTML = '<span class="material-icons-round">edit</span>';
                 editButton.title = 'Edit and resend';
                 editButton.style.cssText = `
-                    position: absolute;
-                    top: 8px;
-                    right: 8px;
                     background: var(--surface-variant);
                     border: 1px solid var(--outline);
                     border-radius: 6px;
                     padding: 4px;
                     cursor: pointer;
-                    opacity: 0;
-                    transition: opacity 0.2s;
                     font-size: 16px;
                     color: var(--on-surface-variant);
                 `;
-                
                 editButton.onclick = () => editMessage(content, messageDiv);
+                
+                const deleteButton = document.createElement('button');
+                deleteButton.className = 'delete-btn';
+                deleteButton.innerHTML = '<span class="material-icons-round">delete</span>';
+                deleteButton.title = 'Delete prompt and response';
+                deleteButton.style.cssText = `
+                    background: var(--surface-variant);
+                    border: 1px solid var(--outline);
+                    border-radius: 6px;
+                    padding: 4px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    color: var(--on-surface-variant);
+                `;
+                deleteButton.onclick = () => deleteUserMessage(messageDiv);
+                
+                buttonContainer.appendChild(editButton);
+                buttonContainer.appendChild(deleteButton);
                 
                 messageDiv.style.position = 'relative';
                 messageDiv.appendChild(avatarDiv);
                 messageDiv.appendChild(contentDiv);
-                messageDiv.appendChild(editButton);
+                messageDiv.appendChild(buttonContainer);
                 
-                // Show edit button on hover
+                // Show buttons on hover
                 messageDiv.addEventListener('mouseenter', () => {
-                    editButton.style.opacity = '1';
+                    buttonContainer.style.opacity = '1';
                 });
                 messageDiv.addEventListener('mouseleave', () => {
-                    editButton.style.opacity = '0';
+                    buttonContainer.style.opacity = '0';
                 });
             }
             
@@ -1542,6 +1579,25 @@
                 saveChatToHistory();
                 updateChatHistoryUI();
             }
+        }
+        
+        function deleteUserMessage(userMessageDiv) {
+            if (!confirm('Delete this prompt and its response?')) return;
+            
+            // Find and remove all assistant messages after this user message
+            let nextElement = userMessageDiv.nextElementSibling;
+            const messagesToRemove = [userMessageDiv];
+            
+            while (nextElement && nextElement.classList.contains('assistant-message')) {
+                messagesToRemove.push(nextElement);
+                nextElement = nextElement.nextElementSibling;
+            }
+            
+            // Remove all collected messages
+            messagesToRemove.forEach(msg => msg.remove());
+            
+            saveChatToHistory();
+            updateChatHistoryUI();
         }
 
         let recognition = null;
@@ -1868,9 +1924,12 @@
         function editMessage(originalContent, userMessageDiv) {
             const contentDiv = userMessageDiv.querySelector('.message-content');
             
+            // Use stored edited content if available, otherwise use displayed content
+            const contentToEdit = userMessageDiv.dataset.editedContent || originalContent;
+            
             // Create textarea for inline editing
             const textarea = document.createElement('textarea');
-            textarea.value = originalContent;
+            textarea.value = contentToEdit;
             textarea.className = 'inline-edit-textarea';
             textarea.style.cssText = `
                 width: 100%;
@@ -1957,8 +2016,25 @@
             // Restore content div and update with new content
             editingMessagePair.contentDiv.textContent = newContent.trim();
             
+            // Store the edited content in dataset for future edits
+            editingMessagePair.userMessage.dataset.editedContent = newContent.trim();
+            
+            // Add loading spinner after the user message
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message assistant-message';
+            loadingDiv.id = 'loading-message';
+            loadingDiv.innerHTML = `
+                <div class="message-avatar">
+                    <span class="material-icons-round">psychology</span>
+                </div>
+                <div class="message-content">
+                    <div class="loading-spinner"></div>
+                </div>
+            `;
+            editingMessagePair.userMessage.parentNode.insertBefore(loadingDiv, editingMessagePair.userMessage.nextSibling);
+            
             // Send the new message
-            sendEditedMessage(newContent.trim());
+            sendEditedMessage(newContent.trim(), editingMessagePair.userMessage);
             
             // Clear editing state
             editingMessagePair = null;
@@ -1974,7 +2050,7 @@
             editingMessagePair = null;
         }
         
-        async function sendEditedMessage(prompt) {
+        async function sendEditedMessage(prompt, userMessageForInsertion) {
             const modelId = document.getElementById('modelSelect').value;
             const enableWebSearch = document.getElementById('webSearchToggle').checked;
             const enableStrataKb = document.getElementById('strataKbToggle').checked;
@@ -1988,9 +2064,6 @@
                 enableWebSearch: enableWebSearch,
                 enableStrataKb: enableStrataKb
             };
-            
-            // Store the user message to insert response after it
-            const userMessageForInsertion = editingMessagePair ? editingMessagePair.userMessage : null;
             
             await sendRequest(requestBody, userMessageForInsertion);
         }
@@ -2013,6 +2086,21 @@
             addMessage(displayMessage, true);
             
             messageInput.value = '';
+            
+            // Add loading spinner
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message assistant-message';
+            loadingDiv.id = 'loading-message';
+            loadingDiv.innerHTML = `
+                <div class="message-avatar">
+                    <span class="material-icons-round">psychology</span>
+                </div>
+                <div class="message-content">
+                    <div class="loading-spinner"></div>
+                </div>
+            `;
+            document.getElementById('chatContainer').appendChild(loadingDiv);
+            document.getElementById('chatContainer').scrollTop = document.getElementById('chatContainer').scrollHeight;
             
             const modelId = document.getElementById('modelSelect').value;
             const enableWebSearch = document.getElementById('webSearchToggle').checked;
@@ -2055,6 +2143,10 @@
                 console.log('Payload size:', (payloadSize / 1024).toFixed(2), 'KB');
                 
                 if (payloadSize > maxPayloadSize) {
+                    // Remove loading spinner
+                    const loadingMsg = document.getElementById('loading-message');
+                    if (loadingMsg) loadingMsg.remove();
+                    
                     addMessage('Error: Request too large. Please use a smaller image.', false);
                     return;
                 }
@@ -2071,6 +2163,10 @@
                 });
                 
                 console.log('Response status:', response.status);
+                
+                // Remove loading spinner
+                const loadingMsg = document.getElementById('loading-message');
+                if (loadingMsg) loadingMsg.remove();
                 
                 if (!response.ok) {
                     const errorText = await response.text();
@@ -2109,6 +2205,10 @@
                 }
             } catch (error) {
                 console.error('Request error:', error);
+                // Remove loading spinner on error
+                const loadingMsg = document.getElementById('loading-message');
+                if (loadingMsg) loadingMsg.remove();
+                
                 addMessage('Error: Failed to send request. Check browser console for details.', false, insertAfter, requestBody.prompt);
             }
         }
