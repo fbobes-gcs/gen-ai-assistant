@@ -1146,15 +1146,17 @@ Please provide a comprehensive analysis based on this financial data and your kn
           max_tokens: 8000 
         };
       } else if (modelId.includes('nova')) {
-        const messages = [];
-        historyResult.Items?.forEach(item => {
-          // Skip KB responses if Strata KB is disabled
-          if (enableStrataKb !== true && item.modelUsed === 'strata-kb') {
-            return;
-          }
-          messages.push({ role: 'user', content: [{ text: item.prompt }] });
-          messages.push({ role: 'assistant', content: [{ text: item.response }] });
-        });
+        // Only create new messages array if not already set (e.g., from file upload)
+        if (messages.length === 0) {
+          historyResult.Items?.forEach(item => {
+            // Skip KB responses if Strata KB is disabled
+            if (enableStrataKb !== true && item.modelUsed === 'strata-kb') {
+              return;
+            }
+            messages.push({ role: 'user', content: [{ text: item.prompt }] });
+            messages.push({ role: 'assistant', content: [{ text: item.response }] });
+          });
+        }
         
         const lowerPrompt = prompt.toLowerCase();
         const isDataChart = (lowerPrompt.includes('bar') || lowerPrompt.includes('line') || lowerPrompt.includes('pie') || lowerPrompt.includes('scatter') || lowerPrompt.includes('chart') || lowerPrompt.includes('graph') || lowerPrompt.includes('plot')) && 
@@ -1219,7 +1221,10 @@ Please provide a comprehensive analysis based on this financial data and your kn
           enhancedPrompt += '\\n\\nUse simple Mermaid syntax in triple-backtick mermaid code blocks. Do NOT include ---config or theme directives. Start directly with the diagram type like flowchart TD, sequenceDiagram, or classDiagram.';
         }
         
-        messages.push({ role: 'user', content: [{ text: enhancedPrompt }] });
+        // Only add prompt if not already in messages (e.g., from file upload)
+        if (messages.length === 0 || !messages[messages.length - 1].content.some(c => c.text || c.image)) {
+          messages.push({ role: 'user', content: [{ text: enhancedPrompt }] });
+        }
         payload = { messages: messages };
         
         // Web search disabled - requires Converse API which has compatibility issues
